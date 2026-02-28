@@ -61,58 +61,7 @@ This system combines **Isolation Forest anomaly detection**, **behavioral featur
 
 ---
 
-## System Architecture
 
-```
-+---------------------------------------------------------------+
-|                         FRONTEND                              |
-|  Streamlit Dashboard (Python)                                 |
-|  - Risk Overview Panel     - Heatmap Visualization           |
-|  - User Search Panel       - Behavioral Timeline             |
-|  - Risk Breakdown Charts   - Logs View                       |
-|  - Threshold Slider        - Fraud Distribution Chart        |
-+-------------------------------+-------------------------------+
-                                |
-                      REST API (HTTP/JSON)
-                                |
-+-------------------------------v-------------------------------+
-|                          BACKEND                              |
-|  FastAPI Application                                          |
-|                                                               |
-|  POST /api/upload        -> CSV ingestion                    |
-|  GET  /api/users         -> User risk profiles               |
-|  GET  /api/scores        -> Risk score retrieval             |
-|  GET  /api/explain/{id}  -> SHAP explanations               |
-|  GET  /api/logs          -> Audit log access                 |
-|  POST /api/threshold     -> Sensitivity adjustment           |
-|                                                               |
-|  Auth Service (JWT)  |  Risk Score Service                   |
-|  Logging Service     |  CSV Validation Service               |
-+-------------------------------+-------------------------------+
-                                |
-                   Internal function calls
-                                |
-+-------------------------------v-------------------------------+
-|                        ML ENGINE                              |
-|  Feature Engineering Module                                   |
-|  Isolation Forest Model                                       |
-|  Risk Score Normalizer (0-100)                               |
-|  Risk Band Classifier                                         |
-|  SHAP Explainability Module                                   |
-+-------------------------------+-------------------------------+
-                                |
-                     Read / Write operations
-                                |
-+-------------------------------v-------------------------------+
-|                        DATA LAYER                             |
-|  PostgreSQL Database                                          |
-|  - users    - transactions    - returns                       |
-|  - fraud_scores    - logs                                     |
-|                                                               |
-|  File Storage                                                 |
-|  - /data/raw/        (uploaded CSVs)                         |
-|  - /data/processed/  (feature vectors)                       |
-+---------------------------------------------------------------+
 ```
 
 **Request Flow**
@@ -139,10 +88,10 @@ User Action
 | Return Velocity (30d) | count of returns in last 30 days |
 | Avg Time-to-Return | mean(return_date - purchase_date) in days |
 | High-Value Item Ratio | high_value_returns / total_returns |
-| Category Repetition Score | entropy of returned product categories |
+
 | Account Age | days since account creation |
 | Geolocation Mismatch Count | returns from IP regions != purchase region |
-| Refund Pattern Consistency | variance in refund method across returns |
+
 
 ### Anomaly Detection
 
@@ -173,20 +122,7 @@ Final Risk Score = weighted_sum(
     0.15 * geolocation_risk_score,
     0.10 * timing_anomaly_score
 )
-```
 
-### Explainability (SHAP)
-
-SHAP TreeExplainer computes per-user feature contributions. The top contributing factors are stored and surfaced in the investigation panel.
-
-```
-User flagged at score 84:
-  + Return Frequency:        +32  (dominant contributor)
-  + High-Value Item Ratio:   +18
-  + Geolocation Mismatch:    +14
-  + Avg Time-to-Return:      +12
-  - Account Age:              -8  (mitigating factor)
-```
 
 ---
 
@@ -251,113 +187,11 @@ erDiagram
     USERS ||--o{ LOGS : "generates"
 ```
 
-### ASCII ER Diagram
 
-```
-+-------------------+        +----------------------+
-|      USERS        |        |     TRANSACTIONS     |
-|-------------------|        |----------------------|
-| user_id     PK    |1------*| txn_id        PK     |
-| email             |        | user_id       FK     |
-| name              |        | item_id              |
-| region            |        | item_category        |
-| account_age_days  |        | item_value           |
-| created_at        |        | purchase_date        |
-+-------------------+        | status               |
-         |                   +----------+-----------+
-         |                              |
-         | 1                            | 1
-         |                             |
-         v *                            v 0..1
-+-------------------+        +----------------------+
-|   FRAUD_SCORES    |        |       RETURNS        |
-|-------------------|        |----------------------|
-| score_id    PK    |        | ret_id        PK     |
-| user_id     FK    |        | txn_id        FK     |
-| risk_score        |        | return_reason        |
-| risk_band         |        | refund_amount        |
-| feature_vector    |        | return_date          |
-| shap_values       |        | refund_method        |
-| computed_at       |        | geo_mismatch  BOOL   |
-+-------------------+        | blocked       BOOL   |
-         |                   +----------------------+
-         | 1
-         |
-         v *
-+-------------------+
-|       LOGS        |
-|-------------------|
-| log_id      PK    |
-| user_id     FK    |
-| action            |
-| actor             |
-| timestamp         |
-| detail            |
-+-------------------+
-```
 
-**Relationships**
 
-| Relationship | Type |
-|---|---|
-| USERS to TRANSACTIONS | One-to-Many |
-| TRANSACTIONS to RETURNS | One-to-Zero-or-One |
-| USERS to FRAUD_SCORES | One-to-One |
-| USERS to LOGS | One-to-Many |
 
----
 
-## UML Component Diagram
-
-```
-+---------------------+
-| Streamlit Frontend  |
-| (Python)            |
-|---------------------|
-| Dashboard Pages     |
-| Chart Components    |
-| Search Panel        |
-| Threshold Control   |
-+----------+----------+
-           |
-           | HTTP REST (JSON)
-           |
-+----------v----------+
-|  FastAPI Backend    |
-|  (Python)           |
-|---------------------|
-| Upload Controller   |
-| User Controller     |
-| Score Controller    |
-| Explain Controller  |
-| Logs Controller     |
-| Auth Middleware     |
-+----+----------+-----+
-     |          |
-     |          | SQL ORM
-     |          |
-     |    +-----v-----------+
-     |    |    Database      |
-     |    |-----------------|
-     |    | users            |
-     |    | transactions     |
-     |    | returns          |
-     |    | fraud_scores     |
-     |    | logs             |
-     |    +-----------------+
-     |
-     | Internal call
-     |
-+----v------------------+
-|      ML Engine        |
-|-----------------------|
-| FeatureEngineer       |
-| IsolationForest       |
-| ScoreNormalizer       |
-| RiskBandClassifier    |
-| SHAPExplainer         |
-+-----------------------+
-```
 
 ---
 
@@ -488,34 +322,16 @@ Logs serve as an audit trail for compliance, model accountability, and fraud dis
 ## Project Structure
 
 ```
+⁠ text
 fraud-detection-dashboard/
-|-- dashboard/                     # Streamlit frontend (Python)
-|   |-- app.py                     # Main Streamlit entry point
-|   |-- pages/
-|   |   |-- overview.py            # Risk overview and metrics
-|   |   |-- investigate.py         # User investigation panel
-|   |   |-- heatmap.py             # Behavioral heatmap
-|   |   |-- logs.py                # Audit logs view
-|   |-- components/
-|   |   |-- risk_chart.py          # Plotly risk breakdown chart
-|   |   |-- user_search.py         # Search widget
-|   |   |-- threshold_slider.py    # Sensitivity control
-|   |-- requirements.txt
-|
-|-- api/                           # FastAPI backend (Python)
-|   |-- main.py                    # FastAPI entry point
-|   |-- routers/                   # upload, users, scores, explain, logs
-|   |-- services/                  # risk_service, auth, logger
-|   |-- ml/                        # feature_engineering, model, scorer, explainer
-|   |-- models/                    # schemas, db connection
-|   |-- requirements.txt
-|
-|-- data/
-|   |-- raw/                       # Uploaded CSVs
-|   |-- processed/                 # Feature vectors
-|
-|-- docker-compose.yml
-|-- README.md
+├── data/
+│   ├── raw/             # Uploaded CSV transaction logs
+│   └── processed/       # Engineered behavioral features
+├── models/              # Serialized model artifacts (.pkl)
+├── src/                 # Core logic: feature engineering & ML utilities
+├── app.py               # Streamlit dashboard entry point
+└── README.md            # Project documentation
+ ⁠
 ```
 
 ---
