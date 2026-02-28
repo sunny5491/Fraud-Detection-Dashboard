@@ -322,7 +322,7 @@ Logs serve as an audit trail for compliance, model accountability, and fraud dis
 ## Project Structure
 
 ```
-⁠ text
+⁠ 
 fraud-detection-dashboard/
 ├── data/
 │   ├── raw/             # Uploaded CSV transaction logs
