@@ -41,23 +41,22 @@ This system combines **Isolation Forest anomaly detection**, **behavioral featur
 
 ## Key Features
 
-| Feature | Description |
-|---|---|
-| CSV Transaction Ingestion | Upload raw transaction logs via dashboard |
-| Real-Time User Search | Look up any user by ID or email for instant profile |
-| Risk Score (0-100) | Normalized anomaly score per user |
-| Risk Band Classification | Automatic Low / Medium / High categorization |
-| Total Financial Loss | Estimated fraud-attributed refund value |
-| Loss Recovery Tracking | Tracks blocked or reversed refunds |
-| Fraud Distribution Chart | Visual breakdown of fraud vs. legitimate users |
-| Top Fraud Risk Factors | SHAP-derived per-user explanation of flag reasons |
-| User Investigation Panel | Full behavior profile for any searched user |
-| Behavioral Timeline | Chronological return and purchase activity |
-| Audit Logs | Every system and user action is recorded |
-| Risk Sensitivity Slider | Adjustable threshold for flagging aggressiveness |
-| Behavioral Heatmap | Cluster-level view of fraud risk concentration |
-| Return Frequency Tracking | Rate of returns relative to total purchases |
-| High-Value Item Detection | Tracks returns skewed toward expensive product categories |
+| Feature                      | Description                                                |
+| ---------------------------- | ---------------------------------------------------------- |
+| CSV Transaction Ingestion    | Upload raw transaction and return logs via dashboard       |
+| Real-Time User Search        | Search any user by ID or email for instant fraud profile   |
+| AI Risk Score (0–100)        | Isolation Forest–based normalized anomaly score            |
+| Risk Band Classification     | Automatic Low / Medium / High risk categorization          |
+| Financial Impact Estimation  | Total refund exposure attributed to risky users            |
+| Loss Recovery Tracking       | Tracks blocked or reversed suspicious refunds              |
+| Fraud Distribution Analytics | Visual breakdown of fraud vs legitimate users              |
+| Explainable AI Insights      | SHAP-based top feature contributions per flagged user      |
+| User Investigation Panel     | Complete behavioral summary for selected user              |
+| Behavioral Timeline View     | Chronological purchase and return activity                 |
+| Risk Threshold Control       | Adjustable sensitivity for fraud detection                 |
+| Behavioral Feature Heatmap   | Cluster-level visualization of fraud patterns              |
+| Audit Logging System         | Records system actions, scoring events, and admin activity |
+
 
 ---
 
