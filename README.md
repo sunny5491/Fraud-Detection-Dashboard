@@ -1,235 +1,175 @@
 # 🛡️ RevGuard: Explainable Returns Fraud Detection Dashboard
 
-<div align="center">
-  <p><strong>A machine learning system for detecting, scoring, and explaining fraudulent return behavior in e-commerce platforms.</strong></p>
-</div>
+**Detect. Score. Explain.**  
+A high-performance machine learning system designed to identify, quantify, and explain fraudulent return behaviors in e-commerce ecosystems using Unsupervised Anomaly Detection.
 
 ---
 
 ## 📖 Table of Contents
+
 - [Project Overview](#-project-overview)
 - [✨ Key Features](#-key-features)
 - [🏗️ System Architecture](#️-system-architecture)
-- [🧠 Machine Learning Approach](#-machine-learning-approach)
-- [🗄️ Database Schema](#️-database-schema)
-- [🧩 UML Component Diagram](#-uml-component-diagram)
-- [📊 ML Pipeline](#-ml-pipeline)
-- [🔍 User Risk Categorization](#-user-risk-categorization)
-- [🛠️ Tech Stack](#️-tech-stack)
+- [📊 Behavioral Analytics](#-behavioral-analytics)
+- [🧠 Machine Learning Engine](#-machine-learning-engine)
+- [🗄️ Data Architecture (ERD)](#️-data-architecture-erd)
+- [🚀 Deployment & Execution](#-deployment--execution)
 - [📂 Project Structure](#-project-structure)
 
 ---
 
 ## 🎯 Project Overview
 
-E-commerce return fraud costs the retail industry billions annually. Unlike payment fraud, return fraud is difficult to detect because every individual return is technically a legitimate business action — the pattern of behavior across time is what reveals abuse.
-
-Common fraud patterns include:
-- **Serial returners** — Customers who systematically return most purchases.
-- **Wardrobing** — Purchasing items for temporary use and returning them.
-- **Receipt manipulation** — Claiming refunds for items not purchased or at inflated values.
-- **High-value item abuse** — Repeatedly returning expensive goods under policy loopholes.
-- **Geolocation mismatch** — Returns initiated from locations inconsistent with purchase origin.
-
-This system bypasses the limitations of rigid, rule-based flagging by focusing on **behavioral deviations**. It combines **Isolation Forest anomaly detection**, **behavioral feature engineering**, and **SHAP-based explainability** to produce audit-ready, human-understandable fraud risk profiles.
+Returns fraud costs retailers billions annually. RevGuard moves beyond static, rule-based flagging by focusing on **behavioral deviations**. By analyzing patterns in return frequency, item value ratios, and timing anomalies, the system isolates high-risk "serial returners" and professional fraud rings that traditional systems often miss.
 
 ---
 
 ## ✨ Key Features
 
-| Feature | Description |
-|---|---|
-| **CSV Transaction Ingestion** | Upload raw transaction logs via dashboard. |
-| **Real-Time User Search** | Look up any user by ID or email for instant profile. |
-| **Risk Score (0-100)** | Normalized anomaly score per user. |
-| **Risk Band Classification** | Automatic Low / Medium / High categorization. |
-| **Top Fraud Risk Factors** | SHAP-derived per-user explanation of flag reasons. |
-| **User Investigation Panel** | Full behavior profile for any searched user. |
-| **Behavioral Timeline** | Chronological return and purchase activity. |
-| **Audit Logs** | Every system and user action is recorded. |
+- **Hybrid Execution**: Runs as a distributed system (FastAPI + Streamlit) or a standalone integrated application.
+- **Explainable AI (SHAP)**: Every fraud flag includes a "Why was this user flagged?" breakdown.
+- **Behavioral Analytics**: Grouped visualization of return patterns across risk bands.
+- **Dynamic Scoring**: Real-time 0-100 risk scoring based on Isolation Forest anomaly detection.
+- **Audit Ready**: Comprehensive logging of all system and investigator actions.
 
 ---
 
 ## 🏗️ System Architecture
 
+RevGuard uses a modern, modular architecture that supports both local development and cloud-native deployment.
+
 ```mermaid
 graph TD
-    subgraph Frontend [Streamlit Dashboard]
-        A[Risk Overview Panel]
-        B[User Search Panel]
-        C[Risk Breakdown Charts]
+    subgraph Client_Layer [Frontend: Streamlit]
+        A[Risk Overview]
+        B[User Investigation]
+        C[Behavioral Analytics]
     end
 
-    subgraph Backend [FastAPI Application]
-        D[REST API Routes]
-        E[Auth Service]
-        F[Logging Service]
+    subgraph Logic_Layer [Processing Engine]
+        D{Communication Mode}
+        E[FastAPI Backend]
+        F[Integrated Local Engine]
     end
 
-    subgraph MLEngine [Machine Learning Engine]
+    subgraph ML_Layer [Core ML Engine]
         G[Feature Engineering]
         H[Isolation Forest Model]
         I[SHAP Explainer]
     end
 
-    subgraph DataLayer [PostgreSQL Database]
-        J[(Users / Transactions)]
-        K[(Fraud Scores / Logs)]
+    subgraph Data_Layer [Data Storage]
+        J[(Processed CSV / PostgreSQL)]
+        K[(System Audit Logs)]
     end
 
-    A -->|HTTP/JSON| D
-    B -->|HTTP/JSON| D
-    C -->|HTTP/JSON| D
-
-    D <--> E
-    D <--> MLEngine
-    MLEngine <--> DataLayer
-    D <--> DataLayer
+    Client_Layer --> D
+    D -->|Standard Mode| E
+    D -->|Integrated Mode| F
+    E & F <--> ML_Layer
+    ML_Layer <--> Data_Layer
 ```
 
 ---
 
-## 🧠 Machine Learning Approach
+## 📊 Behavioral Analytics
 
-### 1. Feature Engineering
-Raw transaction data is transformed into user-level behavioral metrics:
-- **Return Velocity (30d):** Count of returns in the last 30 days.
-- **Value Ratio:** Percentage of total spend that resulted in a refund.
-- **Timing Anomaly:** Average time elapsed between purchase and return.
-- **Geolocation Mismatch:** Returns from IP regions that do not match the purchase origin.
+The dashboard provides a **Behavioral Comparison** view, simplifying complex multivariate data into actionable insights:
 
-### 2. Anomaly Detection (Isolation Forest)
-We use an unsupervised **Isolation Forest** model. Instead of looking for pre-defined fraud labels, the model isolates data points that are statistically "few and different." This allows the system to detect evolving fraud tactics that haven't been seen before.
-
-### 3. Explainability (SHAP)
-Every high-risk score is backed by a **SHAP breakdown**. This converts the "black box" model output into a human-readable list of factors.
-Example: *“Flagged (Score 84) due to High-Value Item Ratio (+18) and Return Frequency (+32).”*
+- **Return Frequency**: Average percentage of orders returned.
+- **High-Value Item Ratio**: Average percentage of refunds involving high-value items.
+- **Risk Grouping**: Automated classification into _Low_, _Medium_, and _High_ risk cohorts.
 
 ---
 
-## 🗄️ Database Schema
+## 🗄️ Data Architecture (ERD)
+
+The system's data model is designed for high-throughput behavioral analysis.
 
 ```mermaid
 erDiagram
     USERS {
-        int user_id PK
-        string email
-        string name
+        string user_id PK
+        int account_age
         string region
-        int account_age_days
-        datetime created_at
     }
-
     TRANSACTIONS {
-        int txn_id PK
-        int user_id FK
-        string item_id
-        string item_category
-        float item_value
-        datetime purchase_date
-        string status
-    }
-
-    RETURNS {
-        int ret_id PK
-        int txn_id FK
-        string return_reason
+        string txn_id PK
+        string user_id FK
         float refund_amount
+        datetime purchase_date
         datetime return_date
-        string refund_method
-        boolean geo_mismatch
-        boolean blocked
+        string return_reason
     }
-
-    FRAUD_SCORES {
-        int score_id PK
-        int user_id FK
+    RISK_PROFILES {
+        string user_id FK
         float risk_score
         string risk_band
-        json feature_vector
-        json shap_values
-        datetime computed_at
+        json shap_breakdown
+        float high_value_ratio
+        float return_frequency
     }
-
-    LOGS {
-        int log_id PK
-        int user_id FK
+    AUDIT_LOGS {
+        datetime timestamp
         string action
         string actor
-        datetime timestamp
         string detail
     }
 
-    USERS ||--o{ TRANSACTIONS : "places"
-    TRANSACTIONS ||--o| RETURNS : "has"
-    USERS ||--|| FRAUD_SCORES : "assigned"
-    USERS ||--o{ LOGS : "generates"
+    USERS ||--o{ TRANSACTIONS : "generates"
+    USERS ||--|| RISK_PROFILES : "evaluated_as"
+    USERS ||--o{ AUDIT_LOGS : "triggers"
 ```
 
 ---
 
-## 🧩 UML Component Diagram
+## 🚀 Deployment & Execution
 
-![UML Component Diagram](diagram.png)
+### 1. Local Development (Distributed Mode)
 
----
+Recommended for development with a persistent API layer.
 
-## 📊 ML Pipeline
+```bash
+# Terminal 1: Start Backend
+python3 backend/main.py
 
-```mermaid
-sequenceDiagram
-    participant Admin
-    participant Validation as Data Validation
-    participant FeatureEng as Feature Engineering
-    participant Model as Isolation Forest
-    participant Explainer as SHAP Explainer
-    participant DB as Database
-    participant UI as Dashboard
-
-    Admin->>Validation: Uploads Raw CSV
-    Validation->>FeatureEng: Clean Data
-    FeatureEng->>Model: Compute User Features
-    Model->>Model: Generate Anomaly Scores
-    Model->>Explainer: Assign Risk Bands (0-100)
-    Explainer->>DB: Calculate SHAP Contributions
-    DB-->>UI: Store Scores & Explanations
-    UI->>Admin: Render Dashboard Updates
+# Terminal 2: Start Frontend
+streamlit run app.py
 ```
 
----
+### 2. Standalone / Cloud Deployment (Integrated Mode)
 
-## � User Risk Categorization
+Best for Streamlit Cloud, Heroku, or standalone containers.
 
-| Score Range | Risk Band | Recommended Action |
-|-------------|-----------|--------------------|
-| **0 - 40** | 🟢 Low | **Standard Monitoring:** No action required. |
-| **41 - 70** | 🟡 Medium | **Manual Review Flagged:** Soft hold on returns. |
-| **71 - 100** | 🔴 High | **Immediate Action:** Escalate and block refunds. |
+```bash
+streamlit run app.py
+```
 
----
+_In this mode, the app automatically initializes the ML pipeline if the API is unreachable._
 
-## 🛠️ Tech Stack
+### 🛠️ Prerequisites
 
-- **Frontend:** Streamlit, Python, Plotly
-- **Backend:** FastAPI, Python
-- **Machine Learning:** scikit-learn, SHAP, Pandas, NumPy
-- **Database:** PostgreSQL
-- **Deployment:** Docker, Docker Compose
+```bash
+pip install -r requirements.txt
+```
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-fraud-detection-dashboard/
+Fraud-Detection-Dashboard/
+├── backend/
+│   ├── main.py          # FastAPI Application
+│   └── ml/
+│       └── pipeline.py  # Core ML & Feature Engineering
 ├── data/
-│   ├── raw/             # Uploaded CSV transaction logs
-│   └── processed/       # Engineered behavioral features
-├── models/              # Serialized model artifacts (.pkl)
-├── src/                 # Core logic: feature engineering & ML utilities
-├── app.py               # Streamlit dashboard entry point
-└── README.md            # Project documentation
+│   └── processed/       # Source behavioral datasets
+├── app.py               # Streamlit Dashboard (Hybrid)
+├── requirements.txt      # Production dependencies
+└── README.md            # Technical Documentation
 ```
 
 ---
-*Built for engineering-first, explainability-driven, and production-minded use cases.*
+
+_Built for production-grade returns fraud mitigation._
