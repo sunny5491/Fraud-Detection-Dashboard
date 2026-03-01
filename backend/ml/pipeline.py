@@ -76,7 +76,7 @@ class FraudPipeline:
             })
             
         user_df = pd.DataFrame(user_stats)
-        user_df = pd.merge(total_orders_per_user, user_df, on='user_id', how='right')
+        user_df = pd.merge(total_orders_per_user, user_df, on='user_id', how='left')
         
         # Calculate Return Frequency
         user_df['Return Frequency'] = (user_df['Total Returns'] / user_df['total_orders']) * 100
@@ -119,15 +119,25 @@ class FraudPipeline:
         
         self.add_log("ML Pipeline Run", "System-ML", f"Processed {len(df)} transactions. Scored {len(user_df)} users.")
         
-    def get_user_profile(self, user_id):
+    def get_user_profile(self, user_id_or_order_id):
         if self.user_features is None:
             return None
             
-        user_row = self.user_features[self.user_features['user_id'] == user_id]
+        # Try matching by user_id first
+        user_row = self.user_features[self.user_features['user_id'] == user_id_or_order_id]
+        
+        # If not found, try matching by Order ID in the raw data
+        if user_row.empty and self.raw_df is not None:
+            matching_order = self.raw_df[self.raw_df['order_id'] == user_id_or_order_id]
+            if not matching_order.empty:
+                actual_user_id = matching_order.iloc[0]['user_id']
+                user_row = self.user_features[self.user_features['user_id'] == actual_user_id]
+
         if user_row.empty:
             return None
             
         idx = user_row.index[0]
+        actual_user_id = user_row.iloc[0]['user_id']
         
         # Generate SHAP Breakdown for this specific user
         feature_cols = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return', 
@@ -137,7 +147,11 @@ class FraudPipeline:
         # However, our normalized risk score goes from 100 (fraud) to 0 (normal). 
         # So negative shap value -> positive impact on Risk Score.
         # We'll flip the signs for readability in UI
-        shap_contributions = -self.shap_values[idx] 
+        # Check if SHAP exists (might not for very new users or if model failed)
+        if self.shap_values is not None and idx < len(self.shap_values):
+            shap_contributions = -self.shap_values[idx] 
+        else:
+            shap_contributions = np.zeros(len(feature_cols))
         
         shap_data = {
             "Feature": feature_cols,
@@ -145,7 +159,7 @@ class FraudPipeline:
         }
         
         return {
-            "User ID": user_row.iloc[0]['user_id'],
+            "User ID": actual_user_id,
             "Risk Score": float(user_row.iloc[0]['Risk Score']),
             "Risk Band": user_row.iloc[0]['Risk Band'],
             "Total Returns": int(user_row.iloc[0]['Total Returns']),
@@ -154,12 +168,19 @@ class FraudPipeline:
             "Region": "North America/Mismatch detected" if user_row.iloc[0]['Geolocation Mismatch'] else "North America/Verified",
             "SHAP": shap_data
         }
-        
-    def get_user_timeline(self, user_id):
+
+    def get_user_timeline(self, user_id_or_order_id):
         if self.raw_df is None:
             return []
             
-        user_events = self.raw_df[self.raw_df['user_id'] == user_id]
+        # Support Order ID search here too
+        actual_user_id = user_id_or_order_id
+        if not user_id_or_order_id.startswith('USER'):
+            matching_order = self.raw_df[self.raw_df['order_id'] == user_id_or_order_id]
+            if not matching_order.empty:
+                actual_user_id = matching_order.iloc[0]['user_id']
+
+        user_events = self.raw_df[self.raw_df['user_id'] == actual_user_id]
         
         timeline = []
         for _, row in user_events.iterrows():

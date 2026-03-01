@@ -194,7 +194,7 @@ elif page == "🔍 User Investigation":
     st.title("🔍 User Risk Investigation")
     st.markdown("Search a specific user's behavioral patterns, SHAP explanation factors, and audit historical actions.")
     
-    search_query = st.text_input("Search User ID (e.g., USER00000204)", "USER00000204")
+    search_query = st.text_input("Search User ID or Order ID (e.g., USER00000204 or ORD00000003)", "ORD00000003")
     
     st.divider()
     
