@@ -78,8 +78,13 @@ class FraudPipeline:
         user_df = pd.DataFrame(user_stats)
         user_df = pd.merge(total_orders_per_user, user_df, on='user_id', how='left')
         
+        # Fill NAs for users with 0 returns before calculation
+        user_df['Total Returns'] = user_df['Total Returns'].fillna(0)
+        user_df['Financial Exposure ($)'] = user_df['Financial Exposure ($)'].fillna(0)
+        
         # Calculate Return Frequency
         user_df['Return Frequency'] = (user_df['Total Returns'] / user_df['total_orders']) * 100
+        user_df['Return Frequency'] = user_df['Return Frequency'].fillna(0)
         
         feature_cols = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return', 
                         'Geolocation Mismatch', 'Account Age', 'Category Repetition']
