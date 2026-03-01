@@ -4,7 +4,7 @@ import plotly.express as px
 import requests
 
 # --- CONFIG ---
-API_BASE_URL = "http://localhost:8000/api/v1"
+API_BASE_URL = "http://localhost:8001/api/v1"
 
 st.set_page_config(
     page_title="RevGuard: Explainable Fraud Detection",
@@ -62,7 +62,7 @@ st.sidebar.divider()
 
 page = st.sidebar.radio(
     "Navigation", 
-    ["📊 Risk Overview", "🔍 User Investigation", "📈 Behavioral Heatmap", "📁 Data Ingestion", "📋 Audit Logs"]
+    ["📊 Risk Overview", "🔍 User Investigation", "📈 Behavioral Analytics", "📁 Data Ingestion", "📋 Audit Logs"]
 )
 
 st.sidebar.divider()
@@ -189,31 +189,46 @@ elif page == "🔍 User Investigation":
             st.warning(f"User '{search_query}' not found or Model not initialized.")
 
 # ==========================================
-# PAGE 3: BEHAVIORAL HEATMAP
+# PAGE 3: BEHAVIORAL ANALYTICS
 # ==========================================
-elif page == "📈 Behavioral Heatmap":
-    st.title("📈 Advanced Analytics & Heatmap")
-    st.markdown("Cluster-level visualization of multivariate fraud patterns.")
+elif page == "📈 Behavioral Analytics":
+    st.title("📈 Behavioral Analytics")
+    st.markdown("Comparison of average return behaviors across Risk Bands.")
     
     heatmap_df = fetch_heatmap_data()
     if not heatmap_df.empty:
-        st.subheader("Risk Distribution: Return Frequency vs. High-Value Ratio")
+        st.subheader("Behavioral Patterns by Risk Band")
         
-        # Real ML data plot
-        fig_scatter = px.scatter(
-            heatmap_df, 
-            x="Return Frequency", 
-            y="High-Value Item Ratio", 
-            color="Risk Score", 
-            size="Risk Score",
-            hover_data=["user_id"],
-            color_continuous_scale="RdYlGn_r", 
-            opacity=0.8
+        # Calculate averages per risk band for a cleaner comparison
+        comparison_df = heatmap_df.groupby('Risk Band')[['Return Frequency', 'High-Value Item Ratio']].mean().reset_index()
+        
+        # Reshape data for plotting
+        plot_df = comparison_df.melt(id_vars='Risk Band', var_name='Metric', value_name='Average Value %')
+        
+        fig_bar = px.bar(
+            plot_df, 
+            x="Risk Band", 
+            y="Average Value %", 
+            color="Metric",
+            barmode="group",
+            text_auto=".1f",
+            color_discrete_map={
+                "Return Frequency": "#FF4B4B",
+                "High-Value Item Ratio": "#FFA421"
+            },
+            category_orders={"Risk Band": ["Low", "Medium", "High"]}
         )
         
-        fig_scatter.update_layout(height=500)
-        st.plotly_chart(fig_scatter, use_container_width=True)
-        st.info("💡 Insight: Isolation forest isolates points that pull furthest away from the bulk density (lower left). The deep red nodes on the extremes represent your High-Risk band.")
+        fig_bar.update_layout(
+            height=500,
+            xaxis_title="Risk Band",
+            yaxis_title="Average Value (%)",
+            legend_title="Behavioral Metric",
+            hovermode="x unified"
+        )
+        
+        st.plotly_chart(fig_bar, use_container_width=True)
+        st.info("💡 Insight: High Risk users typically show significantly higher Return Frequency and High-Value Item Ratios compared to Low Risk users.")
     else:
         st.warning("No data available.")
 

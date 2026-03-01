@@ -83,7 +83,7 @@ def get_heatmap_data():
         return []
         
     df = pipeline.user_features
-    return df[['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score']].head(500).to_dict('records')
+    return df[['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']].head(500).to_dict('records')
 
 @app.post("/api/v1/run-pipeline")
 def run_pipeline(background_tasks: BackgroundTasks):
@@ -95,4 +95,4 @@ def get_logs():
     return pipeline.logs
 
 if __name__ == "__main__":
-    uvicorn.run("backend.main:app" if __package__ else "main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.main:app" if __package__ else "main:app", host="0.0.0.0", port=8001, reload=True)
