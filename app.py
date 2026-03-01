@@ -2,6 +2,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
+import os
+import sys
+
+# Add parent directory to path so it can find backend
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from backend.ml.pipeline import FraudPipeline
 
 # --- CONFIG ---
 API_BASE_URL = "http://localhost:8001/api/v1"
@@ -13,46 +19,93 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- INTEGRATED PIPELINE (FOR STANDALONE MODE) ---
+@st.cache_resource
+def get_local_pipeline():
+    # Use relative path for data
+    data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "processed", "returns_fraud_dataset.csv")
+    if os.path.exists(data_path):
+        p = FraudPipeline(data_path)
+        p.run()
+        return p
+    return None
+
+local_pipeline = get_local_pipeline()
+
 # --- DATA FETCHING (FROM API) ---
 def fetch_risk_stats():
     try:
-        res = requests.get(f"{API_BASE_URL}/risk-stats")
+        res = requests.get(f"{API_BASE_URL}/risk-stats", timeout=1)
         return res.json() if res.status_code == 200 else None
     except:
+        # Fallback to local pipeline
+        if local_pipeline and local_pipeline.user_features is not None:
+            df = local_pipeline.user_features
+            high_risk_df = df[df["Risk Band"] == "High"]
+            total_loss = high_risk_df["Financial Exposure ($)"].sum()
+            recovered_losses = total_loss * 0.45
+            return {
+                "total_users": len(df),
+                "high_risk_flagged": len(high_risk_df),
+                "financial_exposure": float(total_loss),
+                "recovered_losses": float(recovered_losses)
+            }
         return None
 
 def fetch_users(query=""):
     try:
-        res = requests.get(f"{API_BASE_URL}/users", params={"query": query})
+        res = requests.get(f"{API_BASE_URL}/users", params={"query": query}, timeout=1)
         if res.status_code == 200 and isinstance(res.json(), list):
             return pd.DataFrame(res.json())
         return pd.DataFrame()
     except:
+        if local_pipeline and local_pipeline.user_features is not None:
+            df = local_pipeline.user_features
+            if query:
+                df = df[df['user_id'].str.contains(query, case=False, na=False)]
+            data = df[['user_id', 'Risk Score', 'Risk Band', 'Financial Exposure ($)', 'Total Returns']].head(50).to_dict('records')
+            renamed = []
+            for row in data:
+                renamed.append({
+                    "User ID": row["user_id"],
+                    "Risk Score": float(row["Risk Score"]),
+                    "Risk Band": row["Risk Band"],
+                    "Financial Exposure ($)": float(row["Financial Exposure ($)"]),
+                    "Total Returns": int(row["Total Returns"])
+                })
+            return pd.DataFrame(renamed)
         return pd.DataFrame()
 
 def fetch_user_details(user_id):
     try:
-        res = requests.get(f"{API_BASE_URL}/users/{user_id}")
+        res = requests.get(f"{API_BASE_URL}/users/{user_id}", timeout=1)
         return res.json() if res.status_code == 200 else None
     except:
+        if local_pipeline:
+            return local_pipeline.get_user_profile(user_id)
         return None
 
 def fetch_heatmap_data():
     try:
-        res = requests.get(f"{API_BASE_URL}/heatmap-data")
+        res = requests.get(f"{API_BASE_URL}/heatmap-data", timeout=1)
         if res.status_code == 200 and isinstance(res.json(), list):
             return pd.DataFrame(res.json())
         return pd.DataFrame()
     except:
+        if local_pipeline and local_pipeline.user_features is not None:
+            df = local_pipeline.user_features
+            return df[['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']].head(500)
         return pd.DataFrame()
 
 def fetch_logs():
     try:
-        res = requests.get(f"{API_BASE_URL}/logs")
+        res = requests.get(f"{API_BASE_URL}/logs", timeout=1)
         if res.status_code == 200 and isinstance(res.json(), list):
             return pd.DataFrame(res.json())
         return pd.DataFrame()
     except:
+        if local_pipeline:
+            return pd.DataFrame(local_pipeline.logs)
         return pd.DataFrame()
 
 # --- SIDEBAR ---
@@ -70,9 +123,22 @@ st.sidebar.markdown("### ⚙️ Engine Settings")
 st.sidebar.info("Model thresholds are derived dynamically via Isolation Forest min-max scaling.")
 
 stats = fetch_risk_stats()
-if stats and "error" not in stats:
+is_standalone = False
+
+# Check if actually connected to API or using fallback
+try:
+    api_check = requests.get(f"{API_BASE_URL.replace('/api/v1', '')}/", timeout=0.5)
+    if api_check.status_code != 200:
+        is_standalone = True
+except:
+    is_standalone = True
+
+if not is_standalone:
     st.sidebar.caption("Current DB Status: **Connected to API** 🟢")
     st.sidebar.caption("Model Status: **Trained** ✅")
+elif local_pipeline and local_pipeline.user_features is not None:
+    st.sidebar.warning("Mode: **Integrated (Standalone)** 🟡")
+    st.sidebar.caption("Model Status: **Trained (Local)** ✅")
 else:
     st.sidebar.error("API / Model Offline 🔴. Run Pipeline.")
 
@@ -242,12 +308,20 @@ elif page == "📁 Data Ingestion":
     uploaded_file = st.file_uploader("Drop your CSV files here", type=["csv"])
     
     if uploaded_file is not None or st.button("Trigger Pipeline Manually (Use local backend CSV)"):
-        with st.spinner("Executing Data Engineering and Isolation Forest Training via Background Task..."):
-            res = requests.post(f"{API_BASE_URL}/run-pipeline")
-            if res.status_code == 200:
-                st.success("✅ Output: Pipeline Execution Started Successfully. Results will populate shortly in the dashboard.")
+        with st.spinner("Executing Data Engineering and Isolation Forest Training..."):
+            if not is_standalone:
+                res = requests.post(f"{API_BASE_URL}/run-pipeline")
+                if res.status_code == 200:
+                    st.success("✅ Output: Pipeline Execution Started Successfully via API.")
+                else:
+                    st.error("Failed to trigger API pipeline.")
             else:
-                st.error("Failed to trigger pipeline.")
+                if local_pipeline:
+                    local_pipeline.run()
+                    st.success("✅ Output: Local Pipeline Execution Completed Successfully.")
+                    st.rerun()
+                else:
+                    st.error("Local pipeline initialization failed.")
 
 # ==========================================
 # PAGE 5: AUDIT LOGS
