@@ -171,7 +171,7 @@ Fraud-Detection-Dashboard/
 ```
 
 ```
-video link = https://drive.google.com/drive/folders/17G3Y2mYPOTWt4FJYFtxBuhost4v0oR-D?usp=drive_link
+video link = https://drive.google.com/file/d/1X1DNJvj-Y7QUrJRfzieUlPQguvepQWH7/view?usp=sharing
 ```
 
 ---
