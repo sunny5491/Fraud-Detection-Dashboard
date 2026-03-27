@@ -1,30 +1,30 @@
-# 🛡️ RevGuard: Explainable Returns Fraud Detection Dashboard
+# RevGuard: Explainable Returns Fraud Detection Dashboard
 
 **Detect. Score. Explain.**  
 A high-performance machine learning system designed to identify, quantify, and explain fraudulent return behaviors in e-commerce ecosystems using Unsupervised Anomaly Detection.
 
 ---
 
-## 📖 Table of Contents
+## Table of Contents
 
-- [Project Overview](#-project-overview)
-- [✨ Key Features](#-key-features)
-- [🏗️ System Architecture](#️-system-architecture)
-- [📊 Behavioral Analytics](#-behavioral-analytics)
-- [🧠 Machine Learning Engine](#-machine-learning-engine)
-- [🗄️ Data Architecture (ERD)](#️-data-architecture-erd)
-- [🚀 Deployment & Execution](#-deployment--execution)
-- [📂 Project Structure](#-project-structure)
+- [Project Overview](#project-overview)
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Behavioral Analytics](#behavioral-analytics)
+- [Machine Learning Engine](#machine-learning-engine)
+- [Data Architecture (ERD)](#data-architecture-erd)
+- [Deployment & Execution](#deployment--execution)
+- [Project Structure](#project-structure)
 
 ---
 
-## 🎯 Project Overview
+## Project Overview
 
 Returns fraud costs retailers billions annually. RevGuard moves beyond static, rule-based flagging by focusing on **behavioral deviations**. By analyzing patterns in return frequency, item value ratios, and timing anomalies, the system isolates high-risk "serial returners" and professional fraud rings that traditional systems often miss.
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 - **Hybrid Execution**: Runs as a distributed system (FastAPI + Streamlit) or a standalone integrated application.
 - **Explainable AI (SHAP)**: Every fraud flag includes a "Why was this user flagged?" breakdown.
@@ -34,7 +34,7 @@ Returns fraud costs retailers billions annually. RevGuard moves beyond static, r
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 RevGuard uses a modern, modular architecture that supports both local development and cloud-native deployment.
 
@@ -72,7 +72,7 @@ graph TD
 
 ---
 
-## 📊 Behavioral Analytics
+## Behavioral Analytics
 
 The dashboard provides a **Behavioral Comparison** view, simplifying complex multivariate data into actionable insights:
 
@@ -82,7 +82,7 @@ The dashboard provides a **Behavioral Comparison** view, simplifying complex mul
 
 ---
 
-## 🗄️ Data Architecture (ERD)
+## Data Architecture (ERD)
 
 The system's data model is designed for high-throughput behavioral analysis.
 
@@ -123,7 +123,7 @@ erDiagram
 
 ---
 
-## 🚀 Deployment & Execution
+## Deployment & Execution
 
 ### 1. Local Development (Distributed Mode)
 
@@ -147,7 +147,7 @@ streamlit run app.py
 
 _In this mode, the app automatically initializes the ML pipeline if the API is unreachable._
 
-### 🛠️ Prerequisites
+### Prerequisites
 
 ```bash
 pip install -r requirements.txt
@@ -155,7 +155,7 @@ pip install -r requirements.txt
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 Fraud-Detection-Dashboard/
