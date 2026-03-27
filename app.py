@@ -14,7 +14,7 @@ API_BASE_URL = "http://localhost:8001/api/v1"
 
 st.set_page_config(
     page_title="RevGuard: Explainable Fraud Detection",
-    page_icon="🛡️",
+    page_icon="Shield",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -109,17 +109,17 @@ def fetch_logs():
         return pd.DataFrame()
 
 # --- SIDEBAR ---
-st.sidebar.title("🛡️ RevGuard")
+st.sidebar.title("RevGuard")
 st.sidebar.caption("Returns Fraud Detection Engine")
 st.sidebar.divider()
 
 page = st.sidebar.radio(
     "Navigation", 
-    ["📊 Risk Overview", "🔍 User Investigation", "📈 Behavioral Analytics", "📁 Data Ingestion", "📋 Audit Logs"]
+    ["Risk Overview", "User Investigation", "Behavioral Analytics", "Data Ingestion", "Audit Logs"]
 )
 
 st.sidebar.divider()
-st.sidebar.markdown("### ⚙️ Engine Settings")
+st.sidebar.markdown("### Engine Settings")
 st.sidebar.info("Model thresholds are derived dynamically via Isolation Forest min-max scaling.")
 
 stats = fetch_risk_stats()
@@ -134,20 +134,20 @@ except:
     is_standalone = True
 
 if not is_standalone:
-    st.sidebar.caption("Current DB Status: **Connected to API** 🟢")
-    st.sidebar.caption("Model Status: **Trained** ✅")
+    st.sidebar.caption("Current DB Status: **Connected to API** [Online]")
+    st.sidebar.caption("Model Status: **Trained** [Ready]")
 elif local_pipeline and local_pipeline.user_features is not None:
-    st.sidebar.warning("Mode: **Integrated (Standalone)** 🟡")
-    st.sidebar.caption("Model Status: **Trained (Local)** ✅")
+    st.sidebar.warning("Mode: **Integrated (Standalone)** [Warning]")
+    st.sidebar.caption("Model Status: **Trained (Local)** [Ready]")
 else:
-    st.sidebar.error("API / Model Offline 🔴. Run Pipeline.")
+    st.sidebar.error("API / Model Offline [Error]. Run Pipeline.")
 
 
 # ==========================================
 # PAGE 1: RISK OVERVIEW
 # ==========================================
-if page == "📊 Risk Overview":
-    st.title("📊 Enterprise Risk Overview")
+if page == "Risk Overview":
+    st.title("Enterprise Risk Overview")
     st.markdown("Monitor real-time e-commerce return fraud metrics, exposure distributions, and system health.")
     
     if not stats or "error" in stats:
@@ -190,8 +190,8 @@ if page == "📊 Risk Overview":
 # ==========================================
 # PAGE 2: USER INVESTIGATION
 # ==========================================
-elif page == "🔍 User Investigation":
-    st.title("🔍 User Risk Investigation")
+elif page == "User Investigation":
+    st.title("User Risk Investigation")
     st.markdown("Search a specific user's behavioral patterns, SHAP explanation factors, and audit historical actions.")
     
     search_query = st.text_input("Search User ID or Order ID (e.g., USER00000204 or ORD00000003)", "ORD00000003")
@@ -220,8 +220,8 @@ elif page == "🔍 User Investigation":
                 st.markdown(f"**Region Status:** {user_data['Region']}")
                 
                 st.write("")
-                st.button("🚫 Block Refund & Flag Account", type="primary", use_container_width=True)
-                st.button("✅ Mark as Safe (False Positive)", use_container_width=True)
+                st.button("Block Refund & Flag Account", type="primary", use_container_width=True)
+                st.button("Mark as Safe (False Positive)", use_container_width=True)
                 
             with col_shap:
                 st.subheader("Why was this user flagged? (SHAP Explainability)")
@@ -257,8 +257,8 @@ elif page == "🔍 User Investigation":
 # ==========================================
 # PAGE 3: BEHAVIORAL ANALYTICS
 # ==========================================
-elif page == "📈 Behavioral Analytics":
-    st.title("📈 Behavioral Analytics")
+elif page == "Behavioral Analytics":
+    st.title("Behavioral Analytics")
     st.markdown("Comparison of average return behaviors across Risk Bands.")
     
     heatmap_df = fetch_heatmap_data()
@@ -294,15 +294,15 @@ elif page == "📈 Behavioral Analytics":
         )
         
         st.plotly_chart(fig_bar, use_container_width=True)
-        st.info("💡 Insight: High Risk users typically show significantly higher Return Frequency and High-Value Item Ratios compared to Low Risk users.")
+        st.info("Insight: High Risk users typically show significantly higher Return Frequency and High-Value Item Ratios compared to Low Risk users.")
     else:
         st.warning("No data available.")
 
 # ==========================================
 # PAGE 4: DATA INGESTION
 # ==========================================
-elif page == "📁 Data Ingestion":
-    st.title("📁 Data Ingestion Pipeline")
+elif page == "Data Ingestion":
+    st.title("Data Ingestion Pipeline")
     st.markdown("Upload raw transaction and return logs to execute the ML pipeline.")
     
     uploaded_file = st.file_uploader("Drop your CSV files here", type=["csv"])
@@ -312,13 +312,13 @@ elif page == "📁 Data Ingestion":
             if not is_standalone:
                 res = requests.post(f"{API_BASE_URL}/run-pipeline")
                 if res.status_code == 200:
-                    st.success("✅ Output: Pipeline Execution Started Successfully via API.")
+                    st.success("Output: Pipeline Execution Started Successfully via API.")
                 else:
                     st.error("Failed to trigger API pipeline.")
             else:
                 if local_pipeline:
                     local_pipeline.run()
-                    st.success("✅ Output: Local Pipeline Execution Completed Successfully.")
+                    st.success("Output: Local Pipeline Execution Completed Successfully.")
                     st.rerun()
                 else:
                     st.error("Local pipeline initialization failed.")
@@ -326,8 +326,8 @@ elif page == "📁 Data Ingestion":
 # ==========================================
 # PAGE 5: AUDIT LOGS
 # ==========================================
-elif page == "📋 Audit Logs":
-    st.title("📋 System Audit Logs")
+elif page == "Audit Logs":
+    st.title("System Audit Logs")
     st.markdown("Immutable record of automated system events and investigator actions for compliance.")
     
     logs_df = fetch_logs()

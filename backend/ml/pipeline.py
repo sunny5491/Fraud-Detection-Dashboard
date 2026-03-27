@@ -206,7 +206,7 @@ class FraudPipeline:
                     "Amount": f"${row['refund_amount']:,.2f}",
                     "Item Category": "General",
                     "Status": "Refunded",
-                    "Flag": f"⚠️ {row['return_reason']}" if pd.isna(row['return_reason']) == False else "None"
+                    "Flag": f"Warning: {row['return_reason']}" if pd.isna(row['return_reason']) == False else "None"
                 })
         
         # Sort timeline by date
