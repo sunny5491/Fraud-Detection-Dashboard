@@ -130,10 +130,10 @@ erDiagram
 Recommended for development with a persistent API layer.
 
 ```bash
-# Terminal 1: Start Backend
+
 python3 backend/main.py
 
-# Terminal 2: Start Frontend
+
 streamlit run app.py
 ```
 
