@@ -1,23 +1,23 @@
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks
-from typing import Optional
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
+from typing import Optional, List
 import uvicorn
 import os
 import sys
 
-# Add parent directory to path so it can find backend
+# Add parent directory to path so it can find backend and config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 from backend.ml.pipeline import FraudPipeline
 
 # Initialize pipeline
-DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "processed", "returns_fraud_dataset.csv")
-pipeline = FraudPipeline(DATA_PATH)
+pipeline = FraudPipeline(config.DATA_PATH)
 
 app = FastAPI(title="RevGuard API", description="Backend for Fraud Detection Engine")
 
 @app.on_event("startup")
 async def startup_event():
     # If the initial file exists, run pipeline
-    if os.path.exists(DATA_PATH):
+    if os.path.exists(config.DATA_PATH):
         pipeline.run()
 
 @app.get("/")
@@ -27,7 +27,7 @@ def read_root():
 @app.get("/api/v1/risk-stats")
 def get_risk_stats():
     if pipeline.user_features is None:
-        return {"error": "Model not initialized"}
+        raise HTTPException(status_code=503, detail="Model not initialized. Run pipeline first.")
         
     df = pipeline.user_features
     high_risk_df = df[df["Risk Band"] == "High"]
@@ -45,12 +45,12 @@ def get_risk_stats():
 @app.get("/api/v1/users")
 def get_users(query: Optional[str] = None):
     if pipeline.user_features is None:
-        return {"error": "Model not initialized. Run pipeline first."}
+        raise HTTPException(status_code=503, detail="Model not initialized. Run pipeline first.")
         
     df = pipeline.user_features
     # Simple search
     if query:
-        # Assuming query could be partial ID
+        query = query.strip()
         df = df[df['user_id'].str.contains(query, case=False, na=False)]
         
     data = df[['user_id', 'Risk Score', 'Risk Band', 'Financial Exposure ($)', 'Total Returns']].head(50).to_dict('records')
@@ -68,9 +68,13 @@ def get_users(query: Optional[str] = None):
 
 @app.get("/api/v1/users/{user_id}")
 def get_user_details(user_id: str):
+    if not user_id or not isinstance(user_id, str):
+        raise HTTPException(status_code=400, detail="Invalid User ID or Order ID")
+    
+    user_id = user_id.strip()
     profile = pipeline.get_user_profile(user_id)
     if profile is None:
-        return {"error": "User not found or model not initialized"}
+        raise HTTPException(status_code=404, detail="User not found")
         
     timeline = pipeline.get_user_timeline(user_id)
     profile["timeline"] = timeline
@@ -83,7 +87,9 @@ def get_heatmap_data():
         return []
         
     df = pipeline.user_features
-    return df[['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']].head(500).to_dict('records')
+    # Return features used in Behavioral Analytics
+    cols = ['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']
+    return df[cols].head(500).to_dict('records')
 
 @app.post("/api/v1/run-pipeline")
 def run_pipeline(background_tasks: BackgroundTasks):

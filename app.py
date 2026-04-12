@@ -5,12 +5,16 @@ import requests
 import os
 import sys
 
-# Add parent directory to path so it can find backend
+# Add parent directory to path so it can find backend and config
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from backend.ml.pipeline import FraudPipeline
-
-# --- CONFIG ---
-API_BASE_URL = "http://localhost:8001/api/v1"
+try:
+    import config
+    from backend.ml.pipeline import FraudPipeline
+except ImportError:
+    # Handle possible import issues in some environments
+    sys.path.append(os.getcwd())
+    import config
+    from backend.ml.pipeline import FraudPipeline
 
 st.set_page_config(
     page_title="RevGuard: Explainable Fraud Detection",
@@ -23,7 +27,7 @@ st.set_page_config(
 @st.cache_resource
 def get_local_pipeline():
     # Use relative path for data
-    data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "processed", "returns_fraud_dataset.csv")
+    data_path = config.DATA_PATH
     if os.path.exists(data_path):
         p = FraudPipeline(data_path)
         p.run()
@@ -35,9 +39,9 @@ local_pipeline = get_local_pipeline()
 # --- DATA FETCHING (FROM API) ---
 def fetch_risk_stats():
     try:
-        res = requests.get(f"{API_BASE_URL}/risk-stats", timeout=1)
+        res = requests.get(f"{config.API_BASE_URL}/risk-stats", timeout=config.API_TIMEOUT)
         return res.json() if res.status_code == 200 else None
-    except:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         # Fallback to local pipeline
         if local_pipeline and local_pipeline.user_features is not None:
             df = local_pipeline.user_features
@@ -51,14 +55,17 @@ def fetch_risk_stats():
                 "recovered_losses": float(recovered_losses)
             }
         return None
+    except Exception as e:
+        st.error(f"Pipeline error: {str(e)}")
+        return None
 
 def fetch_users(query=""):
     try:
-        res = requests.get(f"{API_BASE_URL}/users", params={"query": query}, timeout=1)
+        res = requests.get(f"{config.API_BASE_URL}/users", params={"query": query}, timeout=config.API_TIMEOUT)
         if res.status_code == 200 and isinstance(res.json(), list):
             return pd.DataFrame(res.json())
         return pd.DataFrame()
-    except:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         if local_pipeline and local_pipeline.user_features is not None:
             df = local_pipeline.user_features
             if query:
@@ -75,37 +82,55 @@ def fetch_users(query=""):
                 })
             return pd.DataFrame(renamed)
         return pd.DataFrame()
+    except (ValueError, KeyError):
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Pipeline error: {str(e)}")
+        return pd.DataFrame()
 
 def fetch_user_details(user_id):
     try:
-        res = requests.get(f"{API_BASE_URL}/users/{user_id}", timeout=1)
+        res = requests.get(f"{config.API_BASE_URL}/users/{user_id}", timeout=config.API_TIMEOUT)
         return res.json() if res.status_code == 200 else None
-    except:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         if local_pipeline:
             return local_pipeline.get_user_profile(user_id)
+        return None
+    except Exception as e:
+        st.error(f"Pipeline error: {str(e)}")
         return None
 
 def fetch_heatmap_data():
     try:
-        res = requests.get(f"{API_BASE_URL}/heatmap-data", timeout=1)
+        res = requests.get(f"{config.API_BASE_URL}/heatmap-data", timeout=config.API_TIMEOUT)
         if res.status_code == 200 and isinstance(res.json(), list):
             return pd.DataFrame(res.json())
         return pd.DataFrame()
-    except:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         if local_pipeline and local_pipeline.user_features is not None:
             df = local_pipeline.user_features
             return df[['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']].head(500)
         return pd.DataFrame()
+    except (ValueError, KeyError):
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Pipeline error: {str(e)}")
+        return pd.DataFrame()
 
 def fetch_logs():
     try:
-        res = requests.get(f"{API_BASE_URL}/logs", timeout=1)
+        res = requests.get(f"{config.API_BASE_URL}/logs", timeout=config.API_TIMEOUT)
         if res.status_code == 200 and isinstance(res.json(), list):
             return pd.DataFrame(res.json())
         return pd.DataFrame()
-    except:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         if local_pipeline:
             return pd.DataFrame(local_pipeline.logs)
+        return pd.DataFrame()
+    except (ValueError, KeyError):
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Pipeline error: {str(e)}")
         return pd.DataFrame()
 
 # --- SIDEBAR ---
@@ -127,10 +152,10 @@ is_standalone = False
 
 # Check if actually connected to API or using fallback
 try:
-    api_check = requests.get(f"{API_BASE_URL.replace('/api/v1', '')}/", timeout=0.5)
+    api_check = requests.get(f"{config.API_BASE_URL.replace('/api/v1', '')}/", timeout=0.5)
     if api_check.status_code != 200:
         is_standalone = True
-except:
+except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
     is_standalone = True
 
 if not is_standalone:
@@ -194,7 +219,14 @@ elif page == "User Investigation":
     st.title("User Risk Investigation")
     st.markdown("Search a specific user's behavioral patterns, SHAP explanation factors, and audit historical actions.")
     
-    search_query = st.text_input("Search User ID or Order ID (e.g., USER00000204 or ORD00000003)", "ORD00000003")
+    search_query = st.text_input("Enter User ID (USER00000001) or Order ID (ORD00000001)", placeholder="Enter User ID (USER00000001) or Order ID (ORD00000001)")
+    
+    # Task 5: Add input validation in search box
+    if search_query:
+        search_query = search_query.strip()
+        if not (search_query.startswith('USER') or search_query.startswith('ORD')):
+            st.warning("Please enter a valid User ID starting with USER or Order ID starting with ORD")
+            st.stop()
     
     st.divider()
     
@@ -216,8 +248,8 @@ elif page == "User Investigation":
                 st.markdown(f"**Risk Band:** {band}")
                 st.markdown(f"**Financial Exposure:** ${user_data['Financial Exposure ($)']:,.2f}")
                 st.markdown(f"**Total Returns:** {user_data['Total Returns']}")
-                st.markdown(f"**Mock Account Age:** {user_data['Account Age']} days")
-                st.markdown(f"**Region Status:** {user_data['Region']}")
+                st.markdown(f"**Days Active:** {user_data.get('Days Active', 0)} days")
+                st.markdown(f"**Reason Diversity:** {user_data.get('Reason Diversity', 0):.2f}")
                 
                 st.write("")
                 st.button("Block Refund & Flag Account", type="primary", use_container_width=True)
@@ -226,21 +258,35 @@ elif page == "User Investigation":
             with col_shap:
                 st.subheader("Why was this user flagged? (SHAP Explainability)")
                 
-                shap_df = pd.DataFrame(user_data['SHAP'])
-                # Filter out zeroes or near zeroes for cleaner chart
-                shap_df = shap_df[abs(shap_df['Contribution']) > 0.05]
-                shap_df = shap_df.sort_values(by="Contribution", ascending=True)
-                
-                if not shap_df.empty:
-                    fig_shap = px.bar(
-                        shap_df, x="Contribution", y="Feature", orientation='h',
-                        color="Contribution", color_continuous_scale=["#00CC96", "#FF4B4B"],
-                        title="Feature Impact Output (Isolation Forest)"
-                    )
-                    fig_shap.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0))
-                    st.plotly_chart(fig_shap, use_container_width=True)
+                if 'SHAP' in user_data:
+                    shap_df = pd.DataFrame(user_data['SHAP'])
+                    # Task 4: Visualization improvements
+                    # Use Abs_Contribution for bar size, Direction for color
+                    # Increases risk = Red (#FF4B4B), Decreases risk = Green (#00CC96)
+                    
+                    # Sort bars by Abs_Contribution descending
+                    shap_df = shap_df.sort_values(by="Abs_Contribution", ascending=True) # Ascending true because Plotly displays from bottom up
+                    
+                    if not shap_df.empty:
+                        fig_shap = px.bar(
+                            shap_df, 
+                            x="Abs_Contribution", 
+                            y="Feature", 
+                            orientation='h',
+                            color="Direction",
+                            color_discrete_map={
+                                'increases_risk': '#FF4B4B',
+                                'decreases_risk': '#00CC96'
+                            },
+                            title="Feature Impact (Magnitude & Direction)"
+                        )
+                        fig_shap.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0))
+                        st.plotly_chart(fig_shap, use_container_width=True)
+                        st.caption("**Legend:** Red = pushes risk higher | Green = pushes risk lower")
+                    else:
+                        st.info("No significant feature contributions found.")
                 else:
-                    st.info("No significant negative/positive feature driving anomaly.")
+                    st.info("SHAP data unavailable for this user.")
                 
             st.divider()
             st.subheader("Behavioral Timeline")
@@ -266,10 +312,12 @@ elif page == "Behavioral Analytics":
         st.subheader("Behavioral Patterns by Risk Band")
         
         # Calculate averages per risk band for a cleaner comparison
-        comparison_df = heatmap_df.groupby('Risk Band')[['Return Frequency', 'High-Value Item Ratio']].mean().reset_index()
+        comparison_df = heatmap_df.groupby('Risk Band')[['Return Frequency', 'High-Value Item Ratio', 'Risk Score']].mean().reset_index()
         
         # Reshape data for plotting
         plot_df = comparison_df.melt(id_vars='Risk Band', var_name='Metric', value_name='Average Value %')
+        # Filter for the two main metrics
+        plot_df = plot_df[plot_df['Metric'].isin(['Return Frequency', 'High-Value Item Ratio'])]
         
         fig_bar = px.bar(
             plot_df, 
@@ -309,19 +357,22 @@ elif page == "Data Ingestion":
     
     if uploaded_file is not None or st.button("Trigger Pipeline Manually (Use local backend CSV)"):
         with st.spinner("Executing Data Engineering and Isolation Forest Training..."):
-            if not is_standalone:
-                res = requests.post(f"{API_BASE_URL}/run-pipeline")
-                if res.status_code == 200:
-                    st.success("Output: Pipeline Execution Started Successfully via API.")
+            try:
+                if not is_standalone:
+                    res = requests.post(f"{config.API_BASE_URL}/run-pipeline", timeout=5)
+                    if res.status_code == 200:
+                        st.success("✅ Output: Pipeline Execution Started Successfully via API.")
+                    else:
+                        st.error("Failed to trigger API pipeline.")
                 else:
-                    st.error("Failed to trigger API pipeline.")
-            else:
-                if local_pipeline:
-                    local_pipeline.run()
-                    st.success("Output: Local Pipeline Execution Completed Successfully.")
-                    st.rerun()
-                else:
-                    st.error("Local pipeline initialization failed.")
+                    if local_pipeline:
+                        local_pipeline.run()
+                        st.success("✅ Output: Local Pipeline Execution Completed Successfully.")
+                        st.rerun()
+                    else:
+                        st.error("Local pipeline initialization failed.")
+            except Exception as e:
+                st.error(f"Pipeline error: {str(e)}")
 
 # ==========================================
 # PAGE 5: AUDIT LOGS

@@ -4,18 +4,44 @@ from sklearn.ensemble import IsolationForest
 import shap
 import os
 import json
+from datetime import datetime
+from typing import Optional, List, Dict
+import sys
+
+# Ensure config is importable from root
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+try:
+    import config
+except ImportError:
+    # Fallback if path manipulation fails in some environments
+    sys.path.append(os.getcwd())
+    import config
 
 class FraudPipeline:
-    def __init__(self, data_path):
+    def __init__(self, data_path: str) -> None:
+        """
+        Initialize the Fraud Detection Pipeline.
+        
+        Args:
+            data_path: Path to the raw CSV dataset.
+        """
         self.data_path = data_path
         self.user_features = None
         self.model = None
         self.explainer = None
         self.shap_values = None
         self.logs = []
+        self.raw_df = None
         
-    def add_log(self, action, actor, detail):
-        from datetime import datetime
+    def add_log(self, action: str, actor: str, detail: str) -> None:
+        """
+        Add a system log entry.
+        
+        Args:
+            action: The action performed.
+            actor: The entity performing the action.
+            detail: Specific details about the action.
+        """
         self.logs.append({
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "Action": action,
@@ -23,46 +49,55 @@ class FraudPipeline:
             "Detail": detail
         })
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Execute the complete ML pipeline: feature engineering, training, and explainability.
+        """
         self.add_log("ML Pipeline Run", "System-ML", "Started data loading and feature engineering")
         
         # Load Raw Data
         df = pd.read_csv(self.data_path)
+        df['purchase_date'] = pd.to_datetime(df['purchase_date'], errors='coerce')
+        df['return_date'] = pd.to_datetime(df['return_date'], errors='coerce')
+        self.raw_df = df
         
         # 1. Feature Engineering
         # Calculate behavioral stats per user
-        user_stats = []
         
-        # We need overall order counts and overall returned orders per user
-        total_orders_per_user = df.groupby('user_id').size().reset_dict(name='total_orders', allow_duplicates=True) if hasattr(pd.core.groupby.DataFrameGroupBy, 'reset_dict') else df.groupby('user_id').size().reset_index(name='total_orders')
+        # Fix Return Frequency: Only count orders older than MIN_RETURN_AGE_DAYS (30 days)
+        cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=config.MIN_RETURN_AGE_DAYS)
+        eligible_orders = df[df['purchase_date'] <= cutoff_date]
+        total_eligible_orders_per_user = eligible_orders.groupby('user_id').size().reset_index(name='eligible_orders')
         
         # Keep only actual returns
         returns_df = df[df['return_reason'].notna() & (df['return_reason'] != 'Not Returned')].copy()
-        
-        # Ensure return_date is datetime
-        returns_df['return_date'] = pd.to_datetime(returns_df['return_date'], errors='coerce')
-        returns_df['purchase_date'] = pd.to_datetime(returns_df['purchase_date'], errors='coerce')
-        
         returns_df['time_to_return'] = (returns_df['return_date'] - returns_df['purchase_date']).dt.days
         
         user_grouped = returns_df.groupby('user_id')
+        user_stats = []
         
         for user_id, group in user_grouped:
             total_returns = len(group)
             total_refund = group['refund_amount'].sum()
             avg_time_to_return = group['time_to_return'].mean()
             
-            # High value ratio (> $500 as high value threshold)
-            high_value_returns = len(group[group['refund_amount'] > 500])
+            # High value ratio
+            high_value_returns = len(group[group['refund_amount'] > config.HIGH_VALUE_ITEM_THRESHOLD])
             high_value_ratio = high_value_returns / total_returns if total_returns > 0 else 0
             
-            # Simplified mock feature for missing ones from dataset
-            # (Account age, Geo mismatch are random since they are not in CSV)
-            np.random.seed(hash(user_id) % 100000000)
-            account_age = np.random.randint(30, 1000)
-            geo_mismatch_prob = np.random.rand() < 0.2
-            geo_mismatch = 1 if geo_mismatch_prob else 0
-            category_repetition = np.random.uniform(0.1, 0.9) # Mocked value for entropy 
+            # TASK 2: Real Data Engineering Calculations
+            # Days Active: Time between first and last purchase
+            all_user_orders = df[df['user_id'] == user_id]
+            if len(all_user_orders) > 1:
+                days_active = (all_user_orders['purchase_date'].max() - all_user_orders['purchase_date'].min()).days
+            else:
+                days_active = 0
+                
+            # Reason Diversity: Unique reasons / Total returns
+            return_reason_diversity = len(group['return_reason'].unique()) / total_returns
+            
+            # Top Reason Ratio: Count of most frequent reason / Total returns
+            top_reason_ratio = group['return_reason'].value_counts().iloc[0] / total_returns
             
             user_stats.append({
                 'user_id': user_id,
@@ -70,32 +105,45 @@ class FraudPipeline:
                 'Financial Exposure ($)': float(total_refund),
                 'Avg Time-to-Return': float(avg_time_to_return),
                 'High-Value Item Ratio': float(high_value_ratio * 100),
-                'Account Age': account_age,
-                'Geolocation Mismatch': geo_mismatch,
-                'Category Repetition': category_repetition
+                'Days Active': days_active,
+                'Reason Diversity': float(return_reason_diversity),
+                'Top Reason Ratio': float(top_reason_ratio)
             })
             
         user_df = pd.DataFrame(user_stats)
-        user_df = pd.merge(total_orders_per_user, user_df, on='user_id', how='left')
         
-        # Fill NAs for users with 0 returns before calculation
+        # Merge with eligible orders for Return Frequency
+        user_df = pd.merge(user_df, total_eligible_orders_per_user, on='user_id', how='left')
+        
+        # Handle cases where user has zero returns but might have eligible orders
+        # (Though current loop is over returns_df, we should include all users from df)
+        all_user_ids = df['user_id'].unique()
+        all_users_df = pd.DataFrame({'user_id': all_user_ids})
+        user_df = pd.merge(all_users_df, user_df, on='user_id', how='left')
+        user_df = pd.merge(user_df, total_eligible_orders_per_user, on='user_id', how='left', suffixes=('', '_dup'))
+        if 'eligible_orders_dup' in user_df.columns:
+            user_df = user_df.drop(columns=['eligible_orders_dup'])
+            
         user_df['Total Returns'] = user_df['Total Returns'].fillna(0)
         user_df['Financial Exposure ($)'] = user_df['Financial Exposure ($)'].fillna(0)
+        user_df['eligible_orders'] = user_df['eligible_orders'].fillna(0)
         
-        # Calculate Return Frequency
-        user_df['Return Frequency'] = (user_df['Total Returns'] / user_df['total_orders']) * 100
-        user_df['Return Frequency'] = user_df['Return Frequency'].fillna(0)
+        # Calculate Return Frequency based on eligible orders (older than 30 days)
+        # Add comment explaining business logic
+        # Business Logic: We only count orders older than 30 days in the denominator 
+        # because recent orders haven't had enough time to be returned, which would artificially lower the frequency.
+        user_df['Return Frequency'] = (user_df['Total Returns'] / user_df['eligible_orders']) * 100
+        user_df['Return Frequency'] = user_df['Return Frequency'].replace([np.inf, -np.inf], 0).fillna(0)
         
         feature_cols = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return', 
-                        'Geolocation Mismatch', 'Account Age', 'Category Repetition']
+                        'Reason Diversity', 'Days Active', 'Top Reason Ratio']
         
-        # Fill NAs
+        # Fill NAs for all features
         user_df[feature_cols] = user_df[feature_cols].fillna(0)
         
         # 2. Anomaly Detection (Isolation Forest)
         X = user_df[feature_cols]
-        # Adding some noise to make sure no two identical rows return exact same anomalies
-        self.model = IsolationForest(contamination=0.1, random_state=42, n_estimators=100)
+        self.model = IsolationForest(contamination=config.CONTAMINATION_RATE, random_state=42, n_estimators=100)
         user_df['Anomaly Score Raw'] = self.model.fit_predict(X)
         
         # Decision function to calculate score. Lower means more anomalous.
@@ -103,28 +151,38 @@ class FraudPipeline:
         
         # Normalize to 0-100 where 100 is highly anomalous (fraudulent)
         min_score, max_score = raw_scores.min(), raw_scores.max()
-        normalized_scores = 100 - ((raw_scores - min_score) / (max_score - min_score) * 100)
+        normalized_scores = config.MAX_RISK_SCORE - ((raw_scores - min_score) / (max_score - min_score) * config.MAX_RISK_SCORE)
         user_df['Risk Score'] = np.round(normalized_scores, 2)
         
         # Generate initial risk bands
         user_df['Risk Band'] = 'Low'
-        user_df.loc[user_df['Risk Score'] >= 41, 'Risk Band'] = 'Medium'
-        user_df.loc[user_df['Risk Score'] >= 71, 'Risk Band'] = 'High'
+        user_df.loc[user_df['Risk Score'] >= config.MEDIUM_RISK_THRESHOLD, 'Risk Band'] = 'Medium'
+        user_df.loc[user_df['Risk Score'] >= config.HIGH_RISK_THRESHOLD, 'Risk Band'] = 'High'
         
         # 3. Explainability (SHAP)
-        # Using TreeExplainer for Isolation Forest
         self.explainer = shap.TreeExplainer(self.model)
         self.shap_values = self.explainer.shap_values(X)
         
-        # Note: IF base values and shap values structure slightly differs, we just parse standard SHAP outputs
-        
-        # We need raw dataset to have timelines ready
-        self.raw_df = df
         self.user_features = user_df
         
         self.add_log("ML Pipeline Run", "System-ML", f"Processed {len(df)} transactions. Scored {len(user_df)} users.")
         
-    def get_user_profile(self, user_id_or_order_id):
+    def get_user_profile(self, user_id_or_order_id: str) -> Optional[dict]:
+        """
+        Retrieve complete risk profile for a user by user_id or order_id.
+        
+        Args:
+            user_id_or_order_id: Either a user ID (USER00000001) or order ID (ORD00000001)
+        
+        Returns:
+            Dictionary with risk score, SHAP breakdown, and user details.
+            Returns None if user not found or model not initialized.
+        """
+        # Input Validation
+        if not user_id_or_order_id or not isinstance(user_id_or_order_id, str):
+            return {"error": "Invalid input"}
+        user_id_or_order_id = user_id_or_order_id.strip()
+
         if self.user_features is None:
             return None
             
@@ -144,23 +202,21 @@ class FraudPipeline:
         idx = user_row.index[0]
         actual_user_id = user_row.iloc[0]['user_id']
         
-        # Generate SHAP Breakdown for this specific user
         feature_cols = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return', 
-                        'Geolocation Mismatch', 'Account Age', 'Category Repetition']
+                        'Reason Diversity', 'Days Active', 'Top Reason Ratio']
         
-        # For Isolation forest shap, negative contributions usually push score towards anomaly (negative decision function = anomaly)
-        # However, our normalized risk score goes from 100 (fraud) to 0 (normal). 
-        # So negative shap value -> positive impact on Risk Score.
-        # We'll flip the signs for readability in UI
-        # Check if SHAP exists (might not for very new users or if model failed)
+        # TASK 4: Fix SHAP sign logic
+        # For Isolation Forest, negative SHAP = pushes toward anomaly = increases risk
         if self.shap_values is not None and idx < len(self.shap_values):
-            shap_contributions = -self.shap_values[idx] 
+            shap_contributions = self.shap_values[idx] 
         else:
             shap_contributions = np.zeros(len(feature_cols))
         
         shap_data = {
             "Feature": feature_cols,
-            "Contribution": np.round(shap_contributions, 2).tolist()
+            "Contribution": np.round(shap_contributions, 2).tolist(),
+            "Direction": ['increases_risk' if v < 0 else 'decreases_risk' for v in shap_contributions.tolist()],
+            "Abs_Contribution": np.abs(np.round(shap_contributions, 2)).tolist()
         }
         
         return {
@@ -169,17 +225,31 @@ class FraudPipeline:
             "Risk Band": user_row.iloc[0]['Risk Band'],
             "Total Returns": int(user_row.iloc[0]['Total Returns']),
             "Financial Exposure ($)": float(user_row.iloc[0]['Financial Exposure ($)']),
-            "Account Age": int(user_row.iloc[0]['Account Age']),
-            "Region": "North America/Mismatch detected" if user_row.iloc[0]['Geolocation Mismatch'] else "North America/Verified",
+            "Days Active": int(user_row.iloc[0]['Days Active']),
+            "Reason Diversity": float(user_row.iloc[0]['Reason Diversity']),
             "SHAP": shap_data
         }
 
-    def get_user_timeline(self, user_id_or_order_id):
+    def get_user_timeline(self, user_id_or_order_id: str) -> list:
+        """
+        Retrieve transaction history timeline for a user.
+        
+        Args:
+            user_id_or_order_id: Either a user ID (USER00000001) or order ID (ORD00000001)
+            
+        Returns:
+            List of dictionaries representing purchase and return events.
+        """
+        # Input Validation
+        if not user_id_or_order_id or not isinstance(user_id_or_order_id, str):
+            return []
+        user_id_or_order_id = user_id_or_order_id.strip()
+
         if self.raw_df is None:
             return []
             
-        # Support Order ID search here too
         actual_user_id = user_id_or_order_id
+        # Check if it's an order ID
         if not user_id_or_order_id.startswith('USER'):
             matching_order = self.raw_df[self.raw_df['order_id'] == user_id_or_order_id]
             if not matching_order.empty:
@@ -192,33 +262,36 @@ class FraudPipeline:
             timeline.append({
                 "Date": row['purchase_date'],
                 "Event Type": "Purchase",
-                "Amount": f"${row['refund_amount']:,.2f}" if row['refund_amount'] else "$0.00", # Using refund amnt as approximation of item value since we lack item_price
+                "Amount": f"${row['refund_amount']:,.2f}" if pd.notna(row['refund_amount']) else "$0.00",
                 "Item Category": "General", 
                 "Status": "Completed",
                 "Flag": "None"
             })
             
-            # Check if this purchase was returned
             if pd.notna(row['return_reason']) and row['return_reason'] != 'Not Returned':
                 timeline.append({
-                    "Date": str(row['return_date']),
+                    "Date": row['return_date'],
                     "Event Type": "Return Request",
                     "Amount": f"${row['refund_amount']:,.2f}",
                     "Item Category": "General",
                     "Status": "Refunded",
-                    "Flag": f"Warning: {row['return_reason']}" if pd.isna(row['return_reason']) == False else "None"
+                    "Flag": f"⚠️ {row['return_reason']}"
                 })
         
-        # Sort timeline by date
-        # Fallback handling for weird date strings
         try:
             timeline = sorted(timeline, key=lambda x: pd.to_datetime(x['Date'], errors='coerce') if pd.notna(x['Date']) else pd.Timestamp.min, reverse=True)
-        except:
+        except Exception:
              pass 
              
         return timeline
         
-    def get_dashboard_data(self):
+    def get_dashboard_data(self) -> dict:
+        """
+        Retrieve high-level dashboard metrics and logs.
+        
+        Returns:
+            Dictionary containing user statistics and system logs.
+        """
         if self.user_features is None:
             return {}
             
