@@ -1,6 +1,8 @@
+# Day 2: added model persistence with joblib and database integration
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
+import joblib
 import shap
 import os
 import json
@@ -32,6 +34,8 @@ class FraudPipeline:
         self.shap_values = None
         self.logs = []
         self.raw_df = None
+        self.trained_at = None
+        self.model_loaded_from_disk = False
         
     def add_log(self, action: str, actor: str, detail: str) -> None:
         """
@@ -48,6 +52,26 @@ class FraudPipeline:
             "Actor": actor,
             "Detail": detail
         })
+
+    def load_model(self) -> bool:
+        import pickle
+        try:
+            if os.path.exists(config.MODEL_PATH) and os.path.exists(config.USER_FEATURES_PATH):
+                with open(config.MODEL_PATH, 'rb') as f:
+                    self.model = pickle.load(f)
+                with open(config.USER_FEATURES_PATH, 'rb') as f:
+                    self.user_features = pickle.load(f)
+                self.explainer = shap.TreeExplainer(self.model)
+                X = self.user_features[['Return Frequency', 'High-Value Item Ratio',
+                                        'Avg Time-to-Return', 'Reason Diversity',
+                                        'Days Active', 'Top Reason Ratio']]
+                self.shap_values = self.explainer.shap_values(X)
+                self.add_log("Model Loaded", "System-ML", "Loaded saved model from disk")
+                return True
+            return False
+        except Exception as e:
+            self.add_log("Model Load Failed", "System-ML", str(e))
+            return False
 
     def run(self) -> None:
         """
@@ -75,6 +99,7 @@ class FraudPipeline:
         
         user_grouped = returns_df.groupby('user_id')
         user_stats = []
+        user_purchase_range = df.groupby('user_id')['purchase_date'].agg(['min', 'max'])
         
         for user_id, group in user_grouped:
             total_returns = len(group)
@@ -87,9 +112,9 @@ class FraudPipeline:
             
             # TASK 2: Real Data Engineering Calculations
             # Days Active: Time between first and last purchase
-            all_user_orders = df[df['user_id'] == user_id]
-            if len(all_user_orders) > 1:
-                days_active = (all_user_orders['purchase_date'].max() - all_user_orders['purchase_date'].min()).days
+            if user_id in user_purchase_range.index:
+                days_active = (user_purchase_range.loc[user_id, 'max'] - 
+                               user_purchase_range.loc[user_id, 'min']).days
             else:
                 days_active = 0
                 
@@ -117,12 +142,7 @@ class FraudPipeline:
         
         # Handle cases where user has zero returns but might have eligible orders
         # (Though current loop is over returns_df, we should include all users from df)
-        all_user_ids = df['user_id'].unique()
-        all_users_df = pd.DataFrame({'user_id': all_user_ids})
-        user_df = pd.merge(all_users_df, user_df, on='user_id', how='left')
-        user_df = pd.merge(user_df, total_eligible_orders_per_user, on='user_id', how='left', suffixes=('', '_dup'))
-        if 'eligible_orders_dup' in user_df.columns:
-            user_df = user_df.drop(columns=['eligible_orders_dup'])
+        user_df = user_df.copy()
             
         user_df['Total Returns'] = user_df['Total Returns'].fillna(0)
         user_df['Financial Exposure ($)'] = user_df['Financial Exposure ($)'].fillna(0)
@@ -165,6 +185,32 @@ class FraudPipeline:
         
         self.user_features = user_df
         
+        import pickle
+        os.makedirs(config.MODEL_DIR, exist_ok=True)
+        with open(config.MODEL_PATH, 'wb') as f:
+            pickle.dump(self.model, f)
+        with open(config.USER_FEATURES_PATH, 'wb') as f:
+            pickle.dump(self.user_features, f)
+
+        # Persist to database
+        try:
+            from backend import database
+            database.save_risk_profiles(user_df)
+            high_count = int((user_df['Risk Band'] == 'High').sum())
+            med_count = int((user_df['Risk Band'] == 'Medium').sum())
+            low_count = int((user_df['Risk Band'] == 'Low').sum())
+            database.save_pipeline_run(
+                total_users=len(user_df),
+                high_risk=high_count,
+                medium_risk=med_count,
+                low_risk=low_count,
+                avg_score=float(user_df['Risk Score'].mean()),
+                total_exposure=float(user_df['Financial Exposure ($)'].sum())
+            )
+            database.add_audit_log("Pipeline Complete", "System-ML", f"Scored {len(user_df)} users. High risk: {high_count}")
+        except Exception as e:
+            print(f"DB persistence error: {e}")
+
         self.add_log("ML Pipeline Run", "System-ML", f"Processed {len(df)} transactions. Scored {len(user_df)} users.")
         
     def get_user_profile(self, user_id_or_order_id: str) -> Optional[dict]:
@@ -186,6 +232,25 @@ class FraudPipeline:
         if self.user_features is None:
             return None
             
+        if self.user_features is not None:
+            user_row = self.user_features[self.user_features['user_id'] == user_id_or_order_id]
+            if user_row.empty:
+                # Check if they exist in raw data at all
+                if self.raw_df is not None:
+                    raw_row = self.raw_df[self.raw_df['user_id'] == user_id_or_order_id]
+                    if not raw_row.empty:
+                        return {
+                            "User ID": user_id_or_order_id,
+                            "Risk Score": 0.0,
+                            "Risk Band": "Low",
+                            "Total Returns": 0,
+                            "Financial Exposure ($)": 0.0,
+                            "Days Active": 0,
+                            "Reason Diversity": 0.0,
+                            "SHAP": {"Feature": [], "Contribution": [], 
+                                     "Direction": [], "Abs_Contribution": []}
+                        }
+
         # Try matching by user_id first
         user_row = self.user_features[self.user_features['user_id'] == user_id_or_order_id]
         
@@ -260,7 +325,7 @@ class FraudPipeline:
         timeline = []
         for _, row in user_events.iterrows():
             timeline.append({
-                "Date": row['purchase_date'],
+                "Date": row['purchase_date'].strftime('%Y-%m-%d') if pd.notna(row['purchase_date']) else "Unknown",
                 "Event Type": "Purchase",
                 "Amount": f"${row['refund_amount']:,.2f}" if pd.notna(row['refund_amount']) else "$0.00",
                 "Item Category": "General", 
@@ -270,7 +335,7 @@ class FraudPipeline:
             
             if pd.notna(row['return_reason']) and row['return_reason'] != 'Not Returned':
                 timeline.append({
-                    "Date": row['return_date'],
+                    "Date": row['return_date'].strftime('%Y-%m-%d') if pd.notna(row['return_date']) else "Unknown",
                     "Event Type": "Return Request",
                     "Amount": f"${row['refund_amount']:,.2f}",
                     "Item Category": "General",
@@ -299,3 +364,26 @@ class FraudPipeline:
             "users": self.user_features[['user_id', 'Risk Score', 'Risk Band', 'Financial Exposure ($)', 'Total Returns']].to_dict('records'),
             "logs": self.logs
         }
+    
+    def load_from_disk(self) -> bool:
+        """
+        Load a previously trained model from disk instead of retraining.
+        Returns True if successful, False if no saved model exists or load fails.
+        This reduces startup time from ~30 seconds to ~1 second.
+        """
+        try:
+            if not os.path.exists(config.MODEL_PATH):
+                return False
+            self.model = joblib.load(config.MODEL_PATH)
+            self.explainer = joblib.load(config.MODEL_PATH.replace('.pkl', '_explainer.pkl'))
+            self.shap_values = joblib.load(config.MODEL_PATH.replace('.pkl', '_shap.pkl'))
+            self.user_features = pd.read_pickle(config.USER_FEATURES_PATH)
+            self.raw_df = pd.read_pickle(config.MODEL_PATH.replace('isolation_forest.pkl', 'raw_df.pkl'))
+            mtime = os.path.getmtime(config.MODEL_PATH)
+            self.trained_at = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            self.model_loaded_from_disk = True
+            self.add_log("Model Loaded", "System", f"Loaded trained model from disk. Trained at: {self.trained_at}")
+            return True
+        except Exception as e:
+            print(f"Model load error: {e}")
+            return False

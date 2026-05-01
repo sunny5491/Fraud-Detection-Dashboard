@@ -1,3 +1,4 @@
+# Day 2: added load_from_disk startup, action endpoint, pipeline-runs endpoint
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from typing import Optional, List
 import uvicorn
@@ -8,6 +9,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from backend.ml.pipeline import FraudPipeline
+from backend import database
 
 # Initialize pipeline
 pipeline = FraudPipeline(config.DATA_PATH)
@@ -16,9 +18,10 @@ app = FastAPI(title="RevGuard API", description="Backend for Fraud Detection Eng
 
 @app.on_event("startup")
 async def startup_event():
-    # If the initial file exists, run pipeline
     if os.path.exists(config.DATA_PATH):
-        pipeline.run()
+        loaded = pipeline.load_model()
+        if not loaded:
+            pipeline.run()
 
 @app.get("/")
 def read_root():
@@ -33,7 +36,21 @@ def get_risk_stats():
     high_risk_df = df[df["Risk Band"] == "High"]
     
     total_loss = high_risk_df["Financial Exposure ($)"].sum()
-    recovered_losses = total_loss * 0.45
+    blocked_logs = [log for log in pipeline.logs 
+                    if log.get("Action") == "Refund Blocked"]
+    blocked_user_ids = []
+    for log in blocked_logs:
+        detail = log.get("Detail", "")
+        for word in detail.split():
+            if word.startswith("USER"):
+                blocked_user_ids.append(word.rstrip("."))
+    if blocked_user_ids and pipeline.user_features is not None:
+        blocked_df = pipeline.user_features[
+            pipeline.user_features['user_id'].isin(blocked_user_ids)
+        ]
+        recovered_losses = float(blocked_df["Financial Exposure ($)"].sum())
+    else:
+        recovered_losses = 0.0
     
     return {
         "total_users": len(df),
@@ -66,6 +83,13 @@ def get_users(query: Optional[str] = None):
         })
     return renamed
 
+@app.get("/api/v1/users/all-bands")
+def get_all_user_bands():
+    if pipeline.user_features is None:
+        raise HTTPException(status_code=503, detail="Model not initialized")
+    df = pipeline.user_features
+    return df[['user_id', 'Risk Band']].to_dict('records')
+
 @app.get("/api/v1/users/{user_id}")
 def get_user_details(user_id: str):
     if not user_id or not isinstance(user_id, str):
@@ -88,7 +112,9 @@ def get_heatmap_data():
         
     df = pipeline.user_features
     # Return features used in Behavioral Analytics
-    cols = ['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']
+    cols = ['user_id', 'Return Frequency', 'High-Value Item Ratio',
+            'Avg Time-to-Return', 'Reason Diversity', 'Top Reason Ratio',
+            'Days Active', 'Risk Score', 'Risk Band']
     return df[cols].head(500).to_dict('records')
 
 @app.post("/api/v1/run-pipeline")
@@ -96,9 +122,28 @@ def run_pipeline(background_tasks: BackgroundTasks):
     background_tasks.add_task(pipeline.run)
     return {"status": "success", "message": "ML Pipeline triggered in background"}
 
+@app.get("/api/v1/pipeline-runs")
+def get_pipeline_runs():
+    return database.get_pipeline_runs()
+
+@app.post("/api/v1/users/{user_id}/action")
+def record_investigator_action(user_id: str, action_type: str, analyst_name: str, notes: str = None):
+    if action_type not in ['blocked', 'cleared', 'noted']:
+        raise HTTPException(status_code=400, detail="action_type must be: blocked, cleared, or noted")
+    if not analyst_name or not analyst_name.strip():
+        raise HTTPException(status_code=400, detail="analyst_name is required")
+    
+    override_status = 'Blocked' if action_type == 'blocked' else 'Cleared' if action_type == 'cleared' else None
+    
+    database.save_investigator_action(user_id, action_type, analyst_name.strip(), notes)
+    if override_status:
+        database.update_user_override(user_id, override_status, analyst_name.strip(), notes)
+    
+    return {"status": "success", "user_id": user_id, "action": action_type, "analyst": analyst_name}
+
 @app.get("/api/v1/logs")
 def get_logs():
-    return pipeline.logs
+    return database.get_audit_logs()
 
 if __name__ == "__main__":
     uvicorn.run("backend.main:app" if __package__ else "main:app", host="0.0.0.0", port=8001, reload=True)

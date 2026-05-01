@@ -1,3 +1,4 @@
+# Day 2: working action buttons, sidebar improvements, force retrain, log count
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -47,7 +48,17 @@ def fetch_risk_stats():
             df = local_pipeline.user_features
             high_risk_df = df[df["Risk Band"] == "High"]
             total_loss = high_risk_df["Financial Exposure ($)"].sum()
-            recovered_losses = total_loss * 0.45
+            blocked_logs = [log for log in local_pipeline.logs 
+                            if log.get("Action") == "Refund Blocked"]
+            recovered_losses = 0.0
+            blocked_user_ids = []
+            for log in blocked_logs:
+                for word in log.get("Detail", "").split():
+                    if word.startswith("USER"):
+                        blocked_user_ids.append(word.rstrip("."))
+            if blocked_user_ids:
+                blocked_df = df[df['user_id'].isin(blocked_user_ids)]
+                recovered_losses = float(blocked_df["Financial Exposure ($)"].sum())
             return {
                 "total_users": len(df),
                 "high_risk_flagged": len(high_risk_df),
@@ -109,7 +120,9 @@ def fetch_heatmap_data():
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         if local_pipeline and local_pipeline.user_features is not None:
             df = local_pipeline.user_features
-            return df[['user_id', 'Return Frequency', 'High-Value Item Ratio', 'Risk Score', 'Risk Band']].head(500)
+            return df[['user_id', 'Return Frequency', 'High-Value Item Ratio',
+                       'Avg Time-to-Return', 'Reason Diversity', 'Top Reason Ratio',
+                       'Days Active', 'Risk Score', 'Risk Band']].head(500)
         return pd.DataFrame()
     except (ValueError, KeyError):
         return pd.DataFrame()
@@ -131,6 +144,36 @@ def fetch_logs():
         return pd.DataFrame()
     except Exception as e:
         st.error(f"Pipeline error: {str(e)}")
+        return pd.DataFrame()
+
+def fetch_pipeline_runs():
+    try:
+        res = requests.get(f"{config.API_BASE_URL}/pipeline-runs", timeout=config.API_TIMEOUT)
+        if res.status_code == 200:
+            return res.json()
+        return []
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        try:
+            from backend import database
+            return database.get_pipeline_runs()
+        except Exception:
+            return []
+    except Exception:
+        return []
+
+def fetch_all_users_for_chart():
+    try:
+        res = requests.get(f"{config.API_BASE_URL}/users/all-bands", 
+                           timeout=config.API_TIMEOUT)
+        if res.status_code == 200:
+            return pd.DataFrame(res.json())
+        return pd.DataFrame()
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        if local_pipeline and local_pipeline.user_features is not None:
+            df = local_pipeline.user_features
+            return df[['user_id', 'Risk Band']].copy()
+        return pd.DataFrame()
+    except Exception:
         return pd.DataFrame()
 
 # --- SIDEBAR ---
@@ -159,13 +202,31 @@ except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
     is_standalone = True
 
 if not is_standalone:
-    st.sidebar.caption("Current DB Status: **Connected to API** [Online]")
-    st.sidebar.caption("Model Status: **Trained** [Ready]")
+    st.sidebar.success("Connected to API [Online]")
+    st.sidebar.caption("Model Status: Trained [Ready]")
 elif local_pipeline and local_pipeline.user_features is not None:
-    st.sidebar.warning("Mode: **Integrated (Standalone)** [Warning]")
-    st.sidebar.caption("Model Status: **Trained (Local)** [Ready]")
+    st.sidebar.warning("Standalone Mode [No API]")
+    if local_pipeline.trained_at:
+        st.sidebar.caption(f"Model trained: {local_pipeline.trained_at}")
+        try:
+            from datetime import datetime
+            trained_dt = datetime.strptime(local_pipeline.trained_at, "%Y-%m-%d %H:%M:%S")
+            hours_since = (datetime.now() - trained_dt).total_seconds() / 3600
+            if hours_since > 24:
+                st.sidebar.warning(f"Model is stale ({hours_since:.0f}h old) — consider retraining")
+            else:
+                st.sidebar.success(f"Model is fresh ({hours_since:.1f}h old)")
+        except Exception:
+            pass
+    source = "loaded from disk" if local_pipeline.model_loaded_from_disk else "trained this session"
+    st.sidebar.caption(f"Source: {source}")
 else:
-    st.sidebar.error("API / Model Offline [Error]. Run Pipeline.")
+    st.sidebar.error("No model loaded. Go to Data Ingestion.")
+
+if stats:
+    st.sidebar.divider()
+    st.sidebar.metric("Total Users", f"{stats['total_users']:,}")
+    st.sidebar.metric("High Risk", f"{stats['high_risk_flagged']:,}")
 
 
 # ==========================================
@@ -183,18 +244,19 @@ if page == "Risk Overview":
         col1.metric("Total Active Users (Scored)", f"{stats['total_users']:,}")
         col2.metric("High Risk Users (Flagged)", f"{stats['high_risk_flagged']}")
         col3.metric("Fraud Financial Exposure", f"${stats['financial_exposure']:,.2f}", "-12% vs last month", delta_color="inverse")
-        col4.metric("Loss Recovered (Blocked est.)", f"${stats['recovered_losses']:,.2f}", "+5% vs last month")
+        col4.metric("Losses Recovered (Blocked Refunds)", f"${stats['recovered_losses']:,.2f}")
         
         st.divider()
         
+        all_users_df = fetch_all_users_for_chart()
         users_df = fetch_users()
-        if not users_df.empty:
+        if not all_users_df.empty:
             col_chart1, col_chart2 = st.columns([1, 1])
             
             with col_chart1:
-                st.subheader("Risk Band Distribution (Top 50 Sample)")
+                st.subheader("Risk Band Distribution (All Users)")
                 fig_pie = px.pie(
-                    users_df, names='Risk Band', 
+                    all_users_df, names='Risk Band', 
                     color='Risk Band',
                     color_discrete_map={'High':'#FF4B4B', 'Medium':'#FFA421', 'Low':'#00CC96'},
                     hole=0.4
@@ -252,8 +314,45 @@ elif page == "User Investigation":
                 st.markdown(f"**Reason Diversity:** {user_data.get('Reason Diversity', 0):.2f}")
                 
                 st.write("")
-                st.button("Block Refund & Flag Account", type="primary", use_container_width=True)
-                st.button("Mark as Safe (False Positive)", use_container_width=True)
+                st.divider()
+                st.subheader("Investigator Actions")
+
+                analyst_name = st.text_input(
+                    "Your name (required to take any action)",
+                    placeholder="e.g. Rahul Sharma",
+                    key="analyst_name"
+                )
+                action_notes = st.text_area(
+                    "Notes (optional)",
+                    placeholder="Reason for this action...",
+                    key="action_notes",
+                    height=80
+                )
+
+                col_block, col_safe = st.columns(2)
+
+                with col_block:
+                    if st.button("Block Refund & Flag Account", type="primary", 
+                                 use_container_width=True):
+                        if local_pipeline:
+                            local_pipeline.add_log(
+                                "Refund Blocked", 
+                                "Investigator",
+                                f"User {user_data['User ID']} manually flagged. Score: {score}. Band: {band}."
+                            )
+                        st.error(f"🚫 Account {user_data['User ID']} has been flagged. Refund blocked.")
+                        st.toast("Action logged to audit trail.", icon="🔒")
+
+                with col_safe:
+                    if st.button("Mark as Safe (False Positive)", use_container_width=True):
+                        if local_pipeline:
+                            local_pipeline.add_log(
+                                "Marked Safe", 
+                                "Investigator",
+                                f"User {user_data['User ID']} marked as false positive. Score was: {score}."
+                            )
+                        st.success(f"✅ User {user_data['User ID']} marked as safe.")
+                        st.toast("Action logged to audit trail.", icon="✅")
                 
             with col_shap:
                 st.subheader("Why was this user flagged? (SHAP Explainability)")
@@ -317,7 +416,16 @@ elif page == "Behavioral Analytics":
         # Reshape data for plotting
         plot_df = comparison_df.melt(id_vars='Risk Band', var_name='Metric', value_name='Average Value %')
         # Filter for the two main metrics
-        plot_df = plot_df[plot_df['Metric'].isin(['Return Frequency', 'High-Value Item Ratio'])]
+        all_metrics = ['Return Frequency', 'High-Value Item Ratio', 
+                       'Avg Time-to-Return', 'Reason Diversity', 
+                       'Top Reason Ratio', 'Days Active']
+        available_metrics = [m for m in all_metrics if m in comparison_df.columns]
+        selected_metrics = st.multiselect(
+            "Select features to compare", 
+            options=available_metrics, 
+            default=['Return Frequency', 'High-Value Item Ratio']
+        )
+        plot_df = plot_df[plot_df['Metric'].isin(selected_metrics)]
         
         fig_bar = px.bar(
             plot_df, 
@@ -353,26 +461,67 @@ elif page == "Data Ingestion":
     st.title("Data Ingestion Pipeline")
     st.markdown("Upload raw transaction and return logs to execute the ML pipeline.")
     
-    uploaded_file = st.file_uploader("Drop your CSV files here", type=["csv"])
-    
-    if uploaded_file is not None or st.button("Trigger Pipeline Manually (Use local backend CSV)"):
-        with st.spinner("Executing Data Engineering and Isolation Forest Training..."):
+    uploaded_file = st.file_uploader("Upload CSV transaction data", type=["csv"])
+
+    if uploaded_file is not None:
+        with st.spinner("Saving uploaded file and retraining model..."):
+            try:
+                import io
+                new_df = pd.read_csv(uploaded_file)
+                required_cols = ['user_id', 'order_id', 'purchase_date', 
+                                 'return_date', 'return_reason', 'refund_amount']
+                missing = [c for c in required_cols if c not in new_df.columns]
+                if missing:
+                    st.error(f"Uploaded CSV is missing required columns: {missing}")
+                else:
+                    os.makedirs(os.path.dirname(config.DATA_PATH), exist_ok=True)
+                    new_df.to_csv(config.DATA_PATH, index=False)
+                    if local_pipeline:
+                        local_pipeline.run()
+                        st.success(f"✅ File uploaded ({len(new_df):,} rows). Model retrained.")
+                        st.rerun()
+            except Exception as e:
+                st.error(f"Upload failed: {str(e)}")
+
+    st.divider()
+    if st.button("Trigger Pipeline Manually (Use existing CSV)"):
+        with st.spinner("Retraining on existing data..."):
             try:
                 if not is_standalone:
                     res = requests.post(f"{config.API_BASE_URL}/run-pipeline", timeout=5)
                     if res.status_code == 200:
-                        st.success("✅ Output: Pipeline Execution Started Successfully via API.")
+                        st.success("✅ Pipeline triggered via API.")
+                        st.info("⏳ Pipeline is retraining in the background. "
+                                "Refresh the Risk Overview page in 10-15 seconds "
+                                "to see updated scores.")
                     else:
-                        st.error("Failed to trigger API pipeline.")
+                        st.error("API pipeline trigger failed.")
                 else:
                     if local_pipeline:
                         local_pipeline.run()
-                        st.success("✅ Output: Local Pipeline Execution Completed Successfully.")
+                        st.success("✅ Local pipeline retrained successfully.")
                         st.rerun()
                     else:
-                        st.error("Local pipeline initialization failed.")
+                        st.error("No local pipeline available.")
             except Exception as e:
-                st.error(f"Pipeline error: {str(e)}")
+                st.error(f"Error: {str(e)}")
+
+    if st.button("🔄 Refresh Dashboard Data"):
+        st.cache_resource.clear()
+        st.rerun()
+    
+    st.divider()
+    st.subheader("Force Retrain")
+    st.caption("Retrain the model from scratch, ignoring any saved model on disk. Use when new data has been added.")
+    if st.button("Force Full Retrain (ignore saved model)"):
+        with st.spinner("Retraining from scratch — this takes 30-60 seconds..."):
+            try:
+                if local_pipeline:
+                    local_pipeline.run()
+                    st.success("Retraining complete. All scores updated.")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Retraining failed: {str(e)}")
 
 # ==========================================
 # PAGE 5: AUDIT LOGS
@@ -383,6 +532,7 @@ elif page == "Audit Logs":
     
     logs_df = fetch_logs()
     if not logs_df.empty:
+        st.caption(f"{len(logs_df)} total log entries")
         st.dataframe(logs_df, use_container_width=True, hide_index=True)
     else:
-        st.info("No system logs currently recorded in this session.")
+        st.info("No system logs currently recorded.")
