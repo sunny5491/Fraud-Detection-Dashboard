@@ -1,5 +1,6 @@
 # Day 2: added load_from_disk startup, action endpoint, pipeline-runs endpoint
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
+from pydantic import BaseModel
 from typing import Optional, List
 import uvicorn
 import os
@@ -10,11 +11,18 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from backend.ml.pipeline import FraudPipeline
 from backend import database
+from backend.rag import service as rag_service
+from backend.rag import vector_store
 
 # Initialize pipeline
 pipeline = FraudPipeline(config.DATA_PATH)
 
 app = FastAPI(title="RevGuard API", description="Backend for Fraud Detection Engine")
+
+import threading
+
+class ChatRequest(BaseModel):
+    question: str
 
 @app.on_event("startup")
 async def startup_event():
@@ -22,6 +30,12 @@ async def startup_event():
         loaded = pipeline.load_model()
         if not loaded:
             pipeline.run()
+        def background_indexer():
+            try:
+                vector_store.index_all_users(pipeline)
+            except Exception as e:
+                print(f"Vector store indexing error during startup: {e}")
+        threading.Thread(target=background_indexer, daemon=True).start()
 
 @app.get("/")
 def read_root():
@@ -117,10 +131,23 @@ def get_heatmap_data():
             'Days Active', 'Risk Score', 'Risk Band']
     return df[cols].head(500).to_dict('records')
 
+def execute_pipeline_task():
+    pipeline.run()
+    try:
+        vector_store.index_all_users(pipeline)
+    except Exception as e:
+        print(f"Vector store indexing error after pipeline run: {e}")
+
 @app.post("/api/v1/run-pipeline")
 def run_pipeline(background_tasks: BackgroundTasks):
-    background_tasks.add_task(pipeline.run)
+    background_tasks.add_task(execute_pipeline_task)
     return {"status": "success", "message": "ML Pipeline triggered in background"}
+
+@app.post("/api/v1/users/{user_id}/chat")
+def chat_with_user_case(user_id: str, request: ChatRequest):
+    if pipeline.user_features is None:
+        raise HTTPException(status_code=503, detail="Model not initialized. Run pipeline first.")
+    return rag_service.answer_question(user_id, request.question, pipeline)
 
 @app.get("/api/v1/pipeline-runs")
 def get_pipeline_runs():
