@@ -387,6 +387,75 @@ elif page == "User Investigation":
                 else:
                     st.info("SHAP data unavailable for this user.")
                 
+                # RAG Chatbot Section for User Investigation
+                st.subheader("Ask about this user")
+                
+                current_user_id = user_data.get("User ID", "")
+                if "chat_history" not in st.session_state:
+                    st.session_state.chat_history = {}
+                if current_user_id not in st.session_state.chat_history:
+                    st.session_state.chat_history[current_user_id] = []
+
+                # Render prior chat history for this user
+                for msg in st.session_state.chat_history[current_user_id]:
+                    with st.chat_message(msg["role"]):
+                        st.write(msg["content"])
+                        if msg["role"] == "assistant" and "sources_used" in msg:
+                            st.caption(f"Grounded in {msg['sources_used']} data points")
+
+                # Capture new question
+                user_prompt = st.chat_input("Ask why this user is flagged, e.g. 'why is the return frequency so high?'")
+                if user_prompt:
+                    st.session_state.chat_history[current_user_id].append({"role": "user", "content": user_prompt})
+                    with st.chat_message("user"):
+                        st.write(user_prompt)
+
+                    timeout_val = max(config.API_TIMEOUT, 15)
+                    with st.spinner("Analyzing user case context..."):
+                        try:
+                            res = requests.post(
+                                f"{config.API_BASE_URL}/users/{current_user_id}/chat",
+                                json={"question": user_prompt},
+                                timeout=timeout_val
+                            )
+                            if res.status_code == 200:
+                                data = res.json()
+                                answer = data.get("answer", "No answer received.")
+                                sources_used = data.get("sources_used", 0)
+                                st.session_state.chat_history[current_user_id].append({
+                                    "role": "assistant",
+                                    "content": answer,
+                                    "sources_used": sources_used
+                                })
+                                with st.chat_message("assistant"):
+                                    st.write(answer)
+                                    st.caption(f"Grounded in {sources_used} data points")
+                            elif res.status_code == 503:
+                                st.error("Model not initialized. Please run the pipeline first.")
+                            else:
+                                st.error(f"Chat API error ({res.status_code}): {res.text}")
+                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                            if local_pipeline:
+                                try:
+                                    from backend.rag import service as local_rag_service
+                                    data = local_rag_service.answer_question(current_user_id, user_prompt, local_pipeline)
+                                    answer = data.get("answer", "No answer received.")
+                                    sources_used = data.get("sources_used", 0)
+                                    st.session_state.chat_history[current_user_id].append({
+                                        "role": "assistant",
+                                        "content": answer,
+                                        "sources_used": sources_used
+                                    })
+                                    with st.chat_message("assistant"):
+                                        st.write(answer)
+                                        st.caption(f"Grounded in {sources_used} data points")
+                                except Exception as e:
+                                    st.error(f"Chat error: {str(e)}")
+                            else:
+                                st.error("Unable to connect to backend API server.")
+                        except Exception as e:
+                            st.error(f"Chat error: {str(e)}")
+                
             st.divider()
             st.subheader("Behavioral Timeline")
             
