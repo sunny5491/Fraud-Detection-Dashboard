@@ -1,4 +1,4 @@
-# Day 2: SQLite persistence layer
+"""SQLite persistence layer for risk profiles, audit logs, and investigator actions."""
 import sqlite3
 import os
 from datetime import datetime

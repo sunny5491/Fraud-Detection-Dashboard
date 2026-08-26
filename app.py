@@ -1,4 +1,4 @@
-# Day 2: working action buttons, sidebar improvements, force retrain, log count
+"""RevGuard Streamlit dashboard (hybrid: FastAPI-backed or standalone integrated mode)."""
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -283,7 +283,6 @@ elif page == "User Investigation":
     
     search_query = st.text_input("Enter User ID (USER00000001) or Order ID (ORD00000001)", placeholder="Enter User ID (USER00000001) or Order ID (ORD00000001)")
     
-    # Task 5: Add input validation in search box
     if search_query:
         search_query = search_query.strip()
         if not (search_query.startswith('USER') or search_query.startswith('ORD')):
@@ -359,7 +358,6 @@ elif page == "User Investigation":
                 
                 if 'SHAP' in user_data:
                     shap_df = pd.DataFrame(user_data['SHAP'])
-                    # Task 4: Visualization improvements
                     # Use Abs_Contribution for bar size, Direction for color
                     # Increases risk = Red (#FF4B4B), Decreases risk = Green (#00CC96)
                     

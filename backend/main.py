@@ -1,4 +1,4 @@
-# Day 2: added load_from_disk startup, action endpoint, pipeline-runs endpoint
+"""FastAPI backend exposing risk scoring, search, analytics, and audit endpoints."""
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List

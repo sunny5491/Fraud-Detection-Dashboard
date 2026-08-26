@@ -1,4 +1,4 @@
-# Day 2: added model persistence with joblib and database integration
+"""Core ML pipeline: behavioral feature engineering, Isolation Forest scoring, SHAP explainability."""
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
@@ -110,7 +110,6 @@ class FraudPipeline:
             high_value_returns = len(group[group['refund_amount'] > config.HIGH_VALUE_ITEM_THRESHOLD])
             high_value_ratio = high_value_returns / total_returns if total_returns > 0 else 0
             
-            # TASK 2: Real Data Engineering Calculations
             # Days Active: Time between first and last purchase
             if user_id in user_purchase_range.index:
                 days_active = (user_purchase_range.loc[user_id, 'max'] - 
@@ -270,7 +269,6 @@ class FraudPipeline:
         feature_cols = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return', 
                         'Reason Diversity', 'Days Active', 'Top Reason Ratio']
         
-        # TASK 4: Fix SHAP sign logic
         # For Isolation Forest, negative SHAP = pushes toward anomaly = increases risk
         if self.shap_values is not None and idx < len(self.shap_values):
             shap_contributions = self.shap_values[idx] 
