@@ -20,6 +20,9 @@ except ImportError:
     import config
 
 class FraudPipeline:
+    FEATURE_COLS = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return',
+                    'Reason Diversity', 'Days Active', 'Top Reason Ratio']
+
     def __init__(self, data_path: str) -> None:
         """
         Initialize the Fraud Detection Pipeline.
@@ -73,22 +76,17 @@ class FraudPipeline:
             self.add_log("Model Load Failed", "System-ML", str(e))
             return False
 
-    def run(self) -> None:
+    @staticmethod
+    def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         """
-        Execute the complete ML pipeline: feature engineering, training, and explainability.
+        Build per-user behavioral features from a parsed transactions DataFrame.
+
+        Expects 'purchase_date' and 'return_date' already converted to datetime.
+        Returns one row per returning user with the six FEATURE_COLS populated.
+        Pure function of the input — no model training or persistence side effects,
+        so it can be reused by notebooks and evaluation scripts.
         """
-        self.add_log("ML Pipeline Run", "System-ML", "Started data loading and feature engineering")
-        
-        # Load Raw Data
-        df = pd.read_csv(self.data_path)
-        df['purchase_date'] = pd.to_datetime(df['purchase_date'], errors='coerce')
-        df['return_date'] = pd.to_datetime(df['return_date'], errors='coerce')
-        self.raw_df = df
-        
-        # 1. Feature Engineering
-        # Calculate behavioral stats per user
-        
-        # Fix Return Frequency: Only count orders older than MIN_RETURN_AGE_DAYS (30 days)
+        # Return Frequency denominator: only count orders older than MIN_RETURN_AGE_DAYS (30 days)
         cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=config.MIN_RETURN_AGE_DAYS)
         eligible_orders = df[df['purchase_date'] <= cutoff_date]
         total_eligible_orders_per_user = eligible_orders.groupby('user_id').size().reset_index(name='eligible_orders')
@@ -153,13 +151,28 @@ class FraudPipeline:
         # because recent orders haven't had enough time to be returned, which would artificially lower the frequency.
         user_df['Return Frequency'] = (user_df['Total Returns'] / user_df['eligible_orders']) * 100
         user_df['Return Frequency'] = user_df['Return Frequency'].replace([np.inf, -np.inf], 0).fillna(0)
-        
-        feature_cols = ['Return Frequency', 'High-Value Item Ratio', 'Avg Time-to-Return', 
-                        'Reason Diversity', 'Days Active', 'Top Reason Ratio']
-        
+
         # Fill NAs for all features
-        user_df[feature_cols] = user_df[feature_cols].fillna(0)
-        
+        user_df[FraudPipeline.FEATURE_COLS] = user_df[FraudPipeline.FEATURE_COLS].fillna(0)
+
+        return user_df
+
+    def run(self) -> None:
+        """
+        Execute the complete ML pipeline: feature engineering, training, and explainability.
+        """
+        self.add_log("ML Pipeline Run", "System-ML", "Started data loading and feature engineering")
+
+        # Load Raw Data
+        df = pd.read_csv(self.data_path)
+        df['purchase_date'] = pd.to_datetime(df['purchase_date'], errors='coerce')
+        df['return_date'] = pd.to_datetime(df['return_date'], errors='coerce')
+        self.raw_df = df
+
+        # 1. Feature Engineering
+        user_df = self.engineer_features(df)
+        feature_cols = list(self.FEATURE_COLS)
+
         # 2. Anomaly Detection (Isolation Forest)
         X = user_df[feature_cols]
         self.model = IsolationForest(contamination=config.CONTAMINATION_RATE, random_state=42, n_estimators=100)
